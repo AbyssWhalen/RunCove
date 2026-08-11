@@ -2,6 +2,37 @@
 
 ## Current Checkpoint (2026-08-11)
 
+- Draft PR #1 remains open. Remote head `f10c4d4` is still the last failed CI
+  run; the final fix has not been pushed while it is being verified locally.
+  Run `31493311756` failed when the MSVC linker received Tauri's VERSION
+  resource twice. Run `31496735900` proved that removing the duplicate made
+  linking succeed, then exposed `STATUS_ENTRYPOINT_NOT_FOUND` when the library
+  test executable no longer received an application manifest. No workflow has
+  been triggered after `31496735900`.
+- The complete fix is local and not pushed. Tauri now owns the VERSION and icon
+  resource, while `windows/app-manifest.rc` supplies only resource type 24 to
+  the application and unit-test executables. Object and final-executable
+  inspection proves one manifest plus one VERSION resource, with no overlapping
+  resource types. Both manifest inputs have explicit Cargo change tracking so
+  incremental builds cannot silently reuse stale resources.
+- The local project-only MSVC toolchain at `src-tauri/target/rustup-msvc` ran
+  the same `cargo test --all-targets` command through Visual Studio `link.exe`:
+  `98 passed / 1 ignored`. The GNU suite has the same result. A full MSVC Tauri
+  release build passed and produced a `RunCove 0.2.0` executable at
+  `apps/desktop/src-tauri/target/msvc-resource-release/release/runcove-desktop.exe`
+  (`12,667,392` bytes, SHA-256
+  `51A29AB8313DD87D40D1442661E75A03EEA3786E35F07CE69D27E81BE2A7A9D1`).
+- The npm process fixture now keeps its listener open for eight seconds instead
+  of two. This removes a reproduced full-suite timing race without changing
+  product timeouts; the focused test and both complete GNU/MSVC suites pass.
+- `AbyssWhalen/portpeek` is public and both workflows use only standard
+  `ubuntu-latest`, `macos-latest`, and `windows-latest` runners. GitHub's
+  current billing documentation says those runner minutes are free and
+  unlimited for public repositories; larger runners and excess artifact/cache
+  storage are separate billable risks, and neither workflow uses a larger
+  runner. Do not push, rerun, merge, tag, or publish without the user's explicit
+  authorization. When authorized, advance the branch once and inspect that one
+  CI run instead of using repeated pushes as a diagnostic loop.
 - Release candidate `v0.2.0` is built and native-smoked. A Windows named
   auto-reset event complements the instance mutex: starting the same executable
   while RunCove is hidden wakes, unminimizes, and focuses the original window.
@@ -41,9 +72,8 @@
   hides it and a second launch restores the same window; process count remains
   one. The old pre-fix PID 9728 was identity-checked, found to contain only
   RunCove/WebView2 processes, and stopped. The final instance is left running.
-- GitHub publication is not complete yet. Next: scope review, commit to a
-  `codex/` branch, push, open a draft PR, wait for CI, merge, tag `v0.2.0`, wait
-  for release automation, and download-verify every published asset.
+- GitHub publication is not complete. PR #1 is still Draft and the final local
+  resource fix has not advanced the remote branch.
 
 - Replaced the internal-sounding restore-set labels with user-facing language:
   Overview, Help, the elevation explanation, and native tray now consistently
@@ -342,10 +372,12 @@
 RunCove `v0.2.0` is implemented, fully reverified, release-built, packaged, and
 native-smoked, including real hide-to-tray and second-launch wake behavior.
 Start by reading the current checkpoint above and `notes.md`; do not repeat the
-completed hardening pass. Complete the already authorized GitHub publish flow:
-review the intended RunCove diff, commit to a `codex/` branch, push, open and
-verify a PR, merge only after CI passes, tag `v0.2.0`, then wait for and
-download-verify the release assets. Preserve historical `v0.1.0` and do not
-rename the remote repository. Do not stop unrelated development services. Real
-UAC cancel/success and a longer idle soak remain residual manual checks and
+completed hardening or CI diagnosis. The final Windows resource split is local,
+passes both GNU and real MSVC tests/releases, and has not been pushed. The
+repository is public and its standard hosted runners do not incur Actions
+compute charges, but do not push, rerun Actions, merge, tag, or publish without
+the user's explicit authorization. Preserve historical `v0.1.0`, keep PR #1
+Draft, do not
+rename the remote repository, and do not stop unrelated development services.
+Real UAC cancel/success and a longer idle soak remain residual manual checks and
 must not be overstated.

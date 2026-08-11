@@ -572,3 +572,62 @@ projects.
   the authoritative workflow parser because no local YAML checker is installed;
   publication remains incomplete until PR CI, merge, tag, workflow, and asset
   download verification all pass.
+
+## 2026-08-11 Windows Resource Linker Follow-up
+
+- Draft PR CI run `31493311756` reached the desktop Rust test link and failed
+  with `CVT1100: duplicate resource. type:VERSION` and `LNK1123`. The linker
+  command contained the same generated `resource.lib` twice because
+  `tauri_build::build()` linked it to binary targets and the custom build step
+  also used `compile_for_everything`.
+- Commit `f10c4d4` limited the custom embedding to GNU. CI run `31496735900`
+  confirmed that MSVC linking no longer duplicated VERSION, but the library
+  test executable then exited before the harness with
+  `0xc0000139 / STATUS_ENTRYPOINT_NOT_FOUND`. The same behavior reproduced in a
+  clean local GNU target when no manifest was linked to the library test.
+- The final local implementation separates resource ownership instead of
+  choosing between those failures:
+  - Tauri uses `WindowsAttributes::new_without_app_manifest()` and remains the
+    only producer of VERSION and icon resources.
+  - `windows/app-manifest.rc` contains only resource type 24 and is linked to
+    every executable, including unit-test harnesses.
+  - Both the `.rc` and `.xml` inputs emit `cargo:rerun-if-changed`, preventing a
+    manifest-only edit from being hidden by an incremental build cache.
+  - `objdump` shows the Tauri archive contains types 3, 14, and 16, while the
+    manifest archive contains only type 24. The final MSVC executable contains
+    exactly those four top-level resource types.
+- Local verification after the split:
+  - Windows GNU format, warnings-denied Clippy, and full desktop tests passed:
+    `98 passed / 1 ignored`.
+  - A project-local Rust `1.97.1 x86_64-pc-windows-msvc` toolchain used Visual
+    Studio 2022 `link.exe 14.44` and Windows SDK `10.0.26100`; the exact
+    `cargo test --all-targets --no-fail-fast` command passed with `98 passed / 1
+    ignored`.
+  - Full GNU and MSVC `npm run tauri build` commands passed. The MSVC executable
+    reports product/file version `0.2.0`, is unsigned as documented, and has
+    SHA-256
+    `51A29AB8313DD87D40D1442661E75A03EEA3786E35F07CE69D27E81BE2A7A9D1`.
+- One full GNU suite initially exposed a timing-only npm fixture failure: the
+  fixture closed its listener after two seconds while parallel scanner tests
+  were active. The focused test passed, and extending the fixture lifetime to
+  eight seconds made the subsequent complete GNU and MSVC suites pass without
+  changing application behavior.
+- No commit or push of the final fix and no new GitHub workflow run followed
+  `31496735900`; PR #1 remains Draft. Live checks confirmed that the repository
+  is public and both workflows use only standard hosted runner labels. GitHub's
+  billing documentation states that standard hosted runner minutes are free
+  and unlimited for public repositories; larger runners remain billable and
+  are not used here. Artifact/cache storage remains quota-bound, so release
+  artifacts keep the existing seven-day retention. References:
+  <https://docs.github.com/en/actions/concepts/billing-and-usage> and
+  <https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/choose-the-runner-for-a-job>.
+- The accidental 1.85 GB `apps/desktop/src-tauri/src-tauri/` build tree was
+  moved without deletion to the ignored project-local path
+  `apps/desktop/src-tauri/target/accidental-nested-build-20260811/`. No project
+  source or file outside RunCove was removed or changed.
+- A final post-review rerun after adding manifest change tracking passed desktop
+  Rust format, warnings-denied Clippy, and the complete GNU suite (`98 passed / 1
+  ignored`). The already-built MSVC library test executable was also launched
+  directly and passed a filtered test, proving it no longer exits with
+  `STATUS_ENTRYPOINT_NOT_FOUND`; its PE resource table contains only one type,
+  `RT_MANIFEST` (24). No commit, push, or new GitHub workflow was triggered.

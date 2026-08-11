@@ -2016,7 +2016,7 @@ server.listen(FIXTURE_PORT, '127.0.0.1', () => {
   console.error('fixture stderr line');
   process.stdout.write('fixture stdout tail');
   process.stderr.write('fixture stderr tail');
-  setTimeout(() => server.close(() => process.exit(7)), 2000);
+  setTimeout(() => server.close(() => process.exit(7)), 8000);
 });
 "#;
         let (_temp, app, profile_id) = npm_fixture(script, port);
