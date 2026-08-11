@@ -148,12 +148,9 @@ impl TrayUiState {
         self.items.open.set_text(labels.open).map_err(|error| {
             crate::error::invalid(format!("Could not update tray menu: {error}"))
         })?;
-        self.items
-            .restore
-            .set_text(restore_text)
-            .map_err(|error| {
-                crate::error::invalid(format!("Could not update tray menu: {error}"))
-            })?;
+        self.items.restore.set_text(restore_text).map_err(|error| {
+            crate::error::invalid(format!("Could not update tray menu: {error}"))
+        })?;
         self.items
             .stop_all
             .set_text(stop_all_text)
@@ -666,11 +663,8 @@ mod tests {
 
     #[test]
     fn tray_status_makes_monitor_only_mode_explicit() {
-        let status = tray_status_text_for_mode(
-            DisplayLanguage::English,
-            StatusSummary::default(),
-            true,
-        );
+        let status =
+            tray_status_text_for_mode(DisplayLanguage::English, StatusSummary::default(), true);
         assert!(status.starts_with("Administrator monitor-only |"));
     }
 

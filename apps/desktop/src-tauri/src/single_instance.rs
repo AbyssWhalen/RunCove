@@ -60,22 +60,23 @@ impl SingleInstanceGuard {
 
         let wake_name = format!("{name}.Wake");
         let wide_wake_name = wide_name(&wake_name);
-        let wake_event = match unsafe {
-            CreateEventW(None, false, false, PCWSTR(wide_wake_name.as_ptr()))
-        } {
-            Ok(handle) => handle,
-            Err(error) => {
-                let _ = unsafe { CloseHandle(mutex) };
-                return Err(invalid(format!(
-                    "Could not create instance wake event: {error}"
-                )));
-            }
-        };
+        let wake_event =
+            match unsafe { CreateEventW(None, false, false, PCWSTR(wide_wake_name.as_ptr())) } {
+                Ok(handle) => handle,
+                Err(error) => {
+                    let _ = unsafe { CloseHandle(mutex) };
+                    return Err(invalid(format!(
+                        "Could not create instance wake event: {error}"
+                    )));
+                }
+            };
 
         if already_exists {
             let notify_result = if notify_existing {
                 unsafe { SetEvent(wake_event) }.map_err(|error| {
-                    invalid(format!("Could not wake the running RunCove window: {error}"))
+                    invalid(format!(
+                        "Could not wake the running RunCove window: {error}"
+                    ))
                 })
             } else {
                 Ok(())
@@ -95,10 +96,7 @@ impl SingleInstanceGuard {
     }
 
     #[cfg(windows)]
-    pub fn start_wake_listener(
-        &mut self,
-        wake: impl Fn() + Send + 'static,
-    ) -> AppResult<()> {
+    pub fn start_wake_listener(&mut self, wake: impl Fn() + Send + 'static) -> AppResult<()> {
         use std::sync::atomic::Ordering;
         use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0};
         use windows::Win32::System::Threading::{WaitForSingleObject, INFINITE};
@@ -127,10 +125,7 @@ impl SingleInstanceGuard {
     }
 
     #[cfg(not(windows))]
-    pub fn start_wake_listener(
-        &mut self,
-        _wake: impl Fn() + Send + 'static,
-    ) -> AppResult<()> {
+    pub fn start_wake_listener(&mut self, _wake: impl Fn() + Send + 'static) -> AppResult<()> {
         Ok(())
     }
 }
