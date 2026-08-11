@@ -1,9 +1,46 @@
-//! Unit tests for scanner logic.
-//! These tests verify parsing and filtering without requiring actual port scanning.
+//! Scanner parsing, filtering, and live Windows socket coverage.
+
+#[cfg(windows)]
+mod live_scan_tests {
+    use runcove::model::{ConnectionState, Protocol};
+    use std::net::{TcpListener, UdpSocket};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn maps_real_tcp_and_udp_listeners_to_the_current_pid() {
+        let tcp = TcpListener::bind("127.0.0.1:0").unwrap();
+        let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let tcp_port = tcp.local_addr().unwrap().port();
+        let udp_port = udp.local_addr().unwrap().port();
+        let pid = std::process::id();
+        let deadline = Instant::now() + Duration::from_secs(2);
+
+        loop {
+            let entries = runcove::scanner::create_scanner().scan().unwrap();
+            let tcp_found = entries.iter().any(|entry| {
+                entry.port == tcp_port
+                    && entry.protocol == Protocol::TCP
+                    && entry.state == ConnectionState::Listen
+                    && entry.pid == Some(pid)
+            });
+            let udp_found = entries.iter().any(|entry| {
+                entry.port == udp_port && entry.protocol == Protocol::UDP && entry.pid == Some(pid)
+            });
+            if tcp_found && udp_found {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "live scanner did not map TCP {tcp_port} and UDP {udp_port} to PID {pid}"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+}
 
 #[cfg(test)]
 mod model_tests {
-    use portpeek::model::*;
+    use runcove::model::*;
     use std::net::IpAddr;
 
     #[test]
@@ -105,7 +142,7 @@ mod model_tests {
 
 #[cfg(test)]
 mod filter_tests {
-    use portpeek::model::*;
+    use runcove::model::*;
     use std::net::IpAddr;
 
     fn make_entry(port: u16, state: ConnectionState, process: Option<&str>) -> PortEntry {

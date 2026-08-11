@@ -7,10 +7,30 @@ mod windows;
 
 use crate::model::PortEntry;
 
+#[derive(Debug)]
+pub struct ScanReport {
+    pub entries: Vec<PortEntry>,
+    pub warnings: Vec<String>,
+}
+
+impl ScanReport {
+    fn complete(entries: Vec<PortEntry>) -> Self {
+        Self {
+            entries,
+            warnings: Vec::new(),
+        }
+    }
+}
+
 /// Trait for platform-specific port scanning implementations.
 pub trait PortScanner {
     /// Scan all ports and return entries.
     fn scan(&self) -> Result<Vec<PortEntry>, ScanError>;
+
+    /// Scan ports and retain non-fatal platform degradation details.
+    fn scan_report(&self) -> Result<ScanReport, ScanError> {
+        self.scan().map(ScanReport::complete)
+    }
 }
 
 /// Errors that can occur during port scanning.
@@ -88,17 +108,7 @@ pub fn resolve_process_name(pid: u32) -> Option<String> {
 
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {}", pid), "/NH", "/FO", "CSV"])
-            .output()
-            .ok()
-            .and_then(|o| {
-                let line = String::from_utf8_lossy(&o.stdout);
-                line.split(',')
-                    .next()
-                    .map(|s| s.trim_matches('"').trim().to_string())
-                    .filter(|s| !s.is_empty() && s != "INFO:")
-            })
+        windows::process_name_snapshot().remove(&pid)
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]

@@ -13,7 +13,7 @@ pub struct PortEntry {
     pub is_public: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum Protocol {
     TCP,
     UDP,
@@ -28,7 +28,7 @@ impl std::fmt::Display for Protocol {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum ConnectionState {
     Listen,
     Established,

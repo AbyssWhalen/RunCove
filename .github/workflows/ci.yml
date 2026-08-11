@@ -10,34 +10,32 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
-    name: Test (${{ matrix.os }})
+  cli:
+    name: CLI (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        rust: [stable]
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ matrix.rust }}
 
-      - name: Rust cache
+      - name: Restore Rust cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Build
-        run: cargo build --verbose
+      - name: Build CLI
+        run: cargo build --verbose --all-targets
 
-      - name: Run tests
-        run: cargo test --verbose
+      - name: Test CLI
+        run: cargo test --verbose --all-targets
 
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
+  rust-lint:
+    name: Rust lint
+    runs-on: windows-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -47,11 +45,75 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Rust cache
+      - name: Restore Rust cache
         uses: Swatinem/rust-cache@v2
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Clippy
+      - name: Run Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
+
+  desktop:
+    name: Windows desktop
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> apps/desktop/src-tauri/target
+
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Audit frontend dependencies
+        working-directory: apps/desktop
+        run: npm audit --audit-level=high
+
+      - name: Lint frontend
+        working-directory: apps/desktop
+        run: npm run lint
+
+      - name: Type-check frontend
+        working-directory: apps/desktop
+        run: npm run typecheck
+
+      - name: Test frontend
+        working-directory: apps/desktop
+        run: npm test -- --run
+
+      - name: Build frontend
+        working-directory: apps/desktop
+        run: npm run build
+
+      - name: Run browser workflows
+        working-directory: apps/desktop
+        run: npm run e2e
+
+      - name: Check desktop Rust formatting
+        working-directory: apps/desktop/src-tauri
+        run: cargo fmt --all -- --check
+
+      - name: Lint desktop Rust
+        working-directory: apps/desktop/src-tauri
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test desktop Rust
+        working-directory: apps/desktop/src-tauri
+        run: cargo test --all-targets
