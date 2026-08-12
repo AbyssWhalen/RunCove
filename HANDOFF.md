@@ -1,16 +1,28 @@
 # RunCove Handoff
 
-## Current Checkpoint (2026-08-11)
+## Current Checkpoint (2026-08-12)
 
-- Draft PR #1 remains open. Remote head `f10c4d4` is still the last failed CI
-  run; the final fix has not been pushed while it is being verified locally.
-  Run `31493311756` failed when the MSVC linker received Tauri's VERSION
-  resource twice. Run `31496735900` proved that removing the duplicate made
-  linking succeed, then exposed `STATUS_ENTRYPOINT_NOT_FOUND` when the library
-  test executable no longer received an application manifest. No workflow has
-  been triggered after `31496735900`.
-- The complete fix is local and not pushed. Tauri now owns the VERSION and icon
-  resource, while `windows/app-manifest.rc` supplies only resource type 24 to
+- Draft PR #1 remains open at remote head `c281340`. The Windows resource split
+  is pushed and CI run `31501585406` proved that the MSVC library test harness
+  now starts and runs all tests, so the prior resource failures are resolved.
+  That run exposed one separate test isolation defect: GitHub's Windows runner
+  is elevated, while `successful_tray_stop_all_synchronizes_an_empty_restore_set`
+  called the real administrator monitor-only guard and incorrectly assumed it
+  would be allowed. Production behavior was correct; the machine-dependent
+  test failed after 97 other desktop tests passed.
+- The local follow-up injects the permission check into the private tray helper.
+  The sole production call still passes the real privilege guard before any
+  process or storage action. Tests explicitly cover both an allowed stop-all and
+  a denied monitor-only action that preserves the restore set. Independent
+  review found no production security regression. Desktop format,
+  warnings-denied Clippy, and the complete local suite pass with `99 passed / 1
+  ignored`. This follow-up is not pushed yet.
+- Earlier resource diagnosis remains relevant: run `31493311756` failed when
+  the MSVC linker received Tauri's VERSION resource twice, and run
+  `31496735900` exposed `STATUS_ENTRYPOINT_NOT_FOUND` when the library test
+  executable no longer received an application manifest.
+- Tauri now owns the VERSION and icon resource, while
+  `windows/app-manifest.rc` supplies only resource type 24 to
   the application and unit-test executables. Object and final-executable
   inspection proves one manifest plus one VERSION resource, with no overlapping
   resource types. Both manifest inputs have explicit Cargo change tracking so
@@ -372,12 +384,13 @@
 RunCove `v0.2.0` is implemented, fully reverified, release-built, packaged, and
 native-smoked, including real hide-to-tray and second-launch wake behavior.
 Start by reading the current checkpoint above and `notes.md`; do not repeat the
-completed hardening or CI diagnosis. The final Windows resource split is local,
-passes both GNU and real MSVC tests/releases, and has not been pushed. The
+completed hardening or resource diagnosis. PR #1 is at `c281340`; resource
+linking is fixed, and the only remaining local change makes the tray stop-all
+test independent of the runner's administrator state. It passes format,
+warnings-denied Clippy, and `99 passed / 1 ignored` locally and still needs one
+focused commit/push, PR CI, merge, tag, release, and asset verification. The
 repository is public and its standard hosted runners do not incur Actions
-compute charges, but do not push, rerun Actions, merge, tag, or publish without
-the user's explicit authorization. Preserve historical `v0.1.0`, keep PR #1
-Draft, do not
-rename the remote repository, and do not stop unrelated development services.
+compute charges. Preserve historical `v0.1.0`, do not rename the remote
+repository, and do not stop unrelated development services.
 Real UAC cancel/success and a longer idle soak remain residual manual checks and
 must not be overstated.

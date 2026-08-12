@@ -631,3 +631,24 @@ projects.
   directly and passed a filtered test, proving it no longer exits with
   `STATUS_ENTRYPOINT_NOT_FOUND`; its PE resource table contains only one type,
   `RT_MANIFEST` (24). No commit, push, or new GitHub workflow was triggered.
+
+## 2026-08-12 Elevated Runner Test Isolation
+
+- Commit `c281340` was pushed once to Draft PR #1. CI run `31501585406` passed
+  all three CLI jobs, root Rust lint, frontend audit/lint/typecheck/tests/build,
+  Edge browser workflows, desktop formatting, and desktop Clippy. The MSVC test
+  harness started normally and ran 99 tests, proving the manifest resource fix.
+- The single failure was
+  `tests::successful_tray_stop_all_synchronizes_an_empty_restore_set`: GitHub's
+  Windows runner uses an elevated token, so the real production guard correctly
+  returned `Administrator monitoring mode is read-only` and the test's
+  unconditional `unwrap()` failed. This was a machine-dependent test defect,
+  not a product failure or resource-link regression.
+- The private `stop_all_from_tray` helper now accepts a permission-check closure.
+  Its only production call passes `privileges::ensure_process_action_allowed`,
+  and the guard remains the first operation before process reservation or
+  storage mutation. Tests inject deterministic allow/deny results; the denied
+  path verifies the error and confirms that the saved restore set is unchanged.
+- Independent review found no production security regression. Post-fix desktop
+  format, warnings-denied Clippy, and all targets passed locally: `99 passed / 1
+  ignored`. No CI or release workflow file was changed.

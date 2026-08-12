@@ -372,7 +372,10 @@ fn build_tray(
                 }
             }
             "stop_all" => {
-                if let Err(error) = stop_all_from_tray(&app.state::<AppState>()) {
+                if let Err(error) = stop_all_from_tray(
+                    &app.state::<AppState>(),
+                    privileges::ensure_process_action_allowed,
+                ) {
                     show_main_window(app);
                     let _ = app.emit(
                         TRAY_STOP_ALL_ERROR_EVENT,
@@ -424,8 +427,11 @@ fn build_tray(
     })
 }
 
-fn stop_all_from_tray(state: &AppState) -> crate::error::AppResult<()> {
-    privileges::ensure_process_action_allowed()?;
+fn stop_all_from_tray(
+    state: &AppState,
+    ensure_action_allowed: impl FnOnce() -> crate::error::AppResult<()>,
+) -> crate::error::AppResult<()> {
+    ensure_action_allowed()?;
     let reservation = state.processes.reserve_shutdown()?;
     let stop_result = state
         .processes
@@ -668,8 +674,7 @@ mod tests {
         assert!(status.starts_with("Administrator monitor-only |"));
     }
 
-    #[test]
-    fn successful_tray_stop_all_synchronizes_an_empty_restore_set() {
+    fn tray_stop_all_fixture() -> (tempfile::TempDir, Arc<Storage>, AppState, String) {
         let temp = tempfile::tempdir().unwrap();
         let storage = Arc::new(Storage::open(&temp.path().join("tray-test.sqlite3")).unwrap());
         let project = storage
@@ -691,16 +696,39 @@ mod tests {
                 }],
             })
             .unwrap();
+        let profile_id = project.profiles[0].id.clone();
         storage
-            .save_restore_set(&[project.profiles[0].id.clone()])
+            .save_restore_set(std::slice::from_ref(&profile_id))
             .unwrap();
         let state = AppState {
             storage: storage.clone(),
             processes: Arc::new(ProcessManager::new(10)),
         };
 
-        stop_all_from_tray(&state).unwrap();
+        (temp, storage, state, profile_id)
+    }
+
+    #[test]
+    fn successful_tray_stop_all_synchronizes_an_empty_restore_set() {
+        let (_temp, storage, state, _profile_id) = tray_stop_all_fixture();
+
+        stop_all_from_tray(&state, || Ok(())).unwrap();
 
         assert!(storage.restore_set().unwrap().profile_ids.is_empty());
+    }
+
+    #[test]
+    fn rejected_tray_stop_all_preserves_the_restore_set() {
+        let (_temp, storage, state, profile_id) = tray_stop_all_fixture();
+
+        let error = stop_all_from_tray(&state, || {
+            Err(crate::error::invalid(
+                privileges::MONITOR_ONLY_ACTION_MESSAGE,
+            ))
+        })
+        .unwrap_err();
+
+        assert_eq!(error.to_string(), privileges::MONITOR_ONLY_ACTION_MESSAGE);
+        assert_eq!(storage.restore_set().unwrap().profile_ids, vec![profile_id]);
     }
 }
