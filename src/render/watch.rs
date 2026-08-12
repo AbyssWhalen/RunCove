@@ -115,7 +115,7 @@ fn watch_loop(
 
             // Header
             let header = format!(
-                " portpeek — watching (refresh: {}s) · press 'q' to quit\n",
+                " RunCove - watching (refresh: {}s) - press 'q' to quit\n",
                 refresh.as_secs()
             );
             if no_color {

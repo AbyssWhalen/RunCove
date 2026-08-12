@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">RunCove application icon</title>
+  <rect width="512" height="512" rx="112" fill="#202426"/>
+  <path
+    d="M112 126v132c0 82 66 148 148 148h28c55 0 105-30 131-77"
+    fill="none"
+    stroke="#f4f1e8"
+    stroke-linecap="round"
+    stroke-width="52"
+  />
+  <path d="M166 230h176" fill="none" stroke="#7d898d" stroke-linecap="round" stroke-width="16"/>
+  <circle cx="166" cy="230" r="30" fill="#ef6a5b" stroke="#202426" stroke-width="12"/>
+  <circle cx="254" cy="230" r="30" fill="#3bb8a5" stroke="#202426" stroke-width="12"/>
+  <circle cx="342" cy="230" r="30" fill="#f4f1e8" stroke="#202426" stroke-width="12"/>
+</svg>

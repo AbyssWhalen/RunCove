@@ -1,46 +1,34 @@
 use std::process::Command;
 
-/// Get the path to the compiled binary (debug or release).
-fn portpeek_bin() -> String {
-    let (debug, release) = if cfg!(windows) {
-        ("target/debug/portpeek.exe", "target/release/portpeek.exe")
-    } else {
-        ("target/debug/portpeek", "target/release/portpeek")
-    };
-
-    if std::path::Path::new(release).exists() {
-        release.to_string()
-    } else {
-        debug.to_string()
-    }
-}
+const RUNCOVE_BIN: &str = env!("CARGO_BIN_EXE_runcove");
+const PORTPEEK_BIN: &str = env!("CARGO_BIN_EXE_portpeek");
 
 #[test]
 fn test_help_flag() {
-    let output = Command::new(portpeek_bin())
+    let output = Command::new(RUNCOVE_BIN)
         .arg("--help")
         .output()
         .expect("Failed to run portpeek --help");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("portpeek"));
-    assert!(stdout.contains("Fast, colorful port inspector"));
+    assert!(stdout.contains("runcove"));
+    assert!(stdout.contains("Local dev services, under control"));
 }
 
 #[test]
 fn test_version_flag() {
-    let output = Command::new(portpeek_bin())
+    let output = Command::new(RUNCOVE_BIN)
         .arg("--version")
         .output()
         .expect("Failed to run portpeek --version");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("portpeek"));
+    assert!(stdout.contains("runcove"));
 }
 
 #[test]
 fn test_json_output() {
-    let output = Command::new(portpeek_bin())
+    let output = Command::new(RUNCOVE_BIN)
         .args(["--json", "--no-color"])
         .output()
         .expect("Failed to run portpeek --json");
@@ -54,7 +42,7 @@ fn test_json_output() {
 
 #[test]
 fn test_no_color_flag() {
-    let output = Command::new(portpeek_bin())
+    let output = Command::new(RUNCOVE_BIN)
         .args(["--no-color"])
         .output()
         .expect("Failed to run portpeek --no-color");
@@ -65,7 +53,7 @@ fn test_no_color_flag() {
 #[test]
 fn test_specific_port() {
     // Querying a port that likely isn't in use should succeed (empty result)
-    let output = Command::new(portpeek_bin())
+    let output = Command::new(RUNCOVE_BIN)
         .args(["--no-color", "59999"])
         .output()
         .expect("Failed to run portpeek with port filter");
@@ -74,32 +62,80 @@ fn test_specific_port() {
 }
 
 #[test]
-fn test_kill_nonexistent_port() {
-    // Killing a port that's not in use should print an error message but not crash
-    let output = Command::new(portpeek_bin())
-        .args(["kill", "59999", "--force"])
+fn test_kill_rejects_zero_port_without_scanning() {
+    let output = Command::new(RUNCOVE_BIN)
+        .args(["kill", "0", "--force"])
         .output()
-        .expect("Failed to run portpeek kill");
+        .expect("Failed to run runcove kill");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // Either stdout or stderr should mention no process found
-    assert!(
-        stdout.contains("No process found")
-            || stderr.contains("No process found")
-            || output.status.success(),
-        "Should handle nonexistent port gracefully"
-    );
+    assert!(!output.status.success());
+    assert!(stderr.contains("Port must be between 1 and 65535"));
 }
 
 #[test]
 fn test_range_format() {
     // Invalid range format should produce a warning
-    let output = Command::new(portpeek_bin())
+    let output = Command::new(RUNCOVE_BIN)
         .args(["--no-color", "--range", "invalid"])
         .output()
         .expect("Failed to run portpeek --range");
 
     // Should still succeed (just ignore bad range with a warning)
     assert!(output.status.success());
+}
+
+#[test]
+fn test_legacy_portpeek_alias() {
+    let output = Command::new(PORTPEEK_BIN)
+        .arg("--version")
+        .output()
+        .expect("Failed to run legacy portpeek alias");
+
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("runcove"));
+}
+
+#[test]
+fn test_legacy_portpeek_argument_and_exit_code_compatibility() {
+    let cases: &[&[&str]] = &[
+        &["--no-color", "59999"],
+        &["--json", "--no-color", "59999"],
+        &["--no-color", "--range", "59999-60000"],
+        &["kill", "0", "--force"],
+    ];
+
+    for args in cases {
+        let primary = Command::new(RUNCOVE_BIN)
+            .args(*args)
+            .output()
+            .expect("Failed to run runcove compatibility case");
+        let legacy = Command::new(PORTPEEK_BIN)
+            .args(*args)
+            .output()
+            .expect("Failed to run portpeek compatibility case");
+
+        assert_eq!(
+            primary.status.code(),
+            legacy.status.code(),
+            "exit code differs for arguments {args:?}"
+        );
+        if args.contains(&"--json") {
+            assert!(serde_json::from_slice::<serde_json::Value>(&primary.stdout).is_ok());
+            assert!(serde_json::from_slice::<serde_json::Value>(&legacy.stdout).is_ok());
+        }
+    }
+}
+
+#[test]
+fn test_watch_rejects_zero_interval() {
+    for binary in [RUNCOVE_BIN, PORTPEEK_BIN] {
+        let output = Command::new(binary)
+            .args(["--watch", "-w", "0"])
+            .output()
+            .expect("Failed to validate watch interval");
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr)
+            .contains("Refresh interval must be at least 1 second"));
+    }
 }

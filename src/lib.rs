@@ -1,8 +1,11 @@
 pub mod cli;
+pub mod cli_app;
 pub mod model;
 pub mod process;
 pub mod render;
 pub mod scanner;
+
+pub use cli_app::run_cli;
 
 use cli::Cli;
 use model::{ConnectionState, PortEntry};

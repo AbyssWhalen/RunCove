@@ -300,19 +300,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "portpeek"
-version = "0.1.0"
-dependencies = [
- "clap",
- "colored",
- "comfy-table",
- "crossterm 0.28.1",
- "serde",
- "serde_json",
- "windows",
-]
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -337,6 +324,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
  "bitflags",
+]
+
+[[package]]
+name = "runcove"
+version = "0.2.0"
+dependencies = [
+ "clap",
+ "colored",
+ "comfy-table",
+ "crossterm 0.28.1",
+ "serde",
+ "serde_json",
+ "windows",
 ]
 
 [[package]]
