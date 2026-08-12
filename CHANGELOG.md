@@ -2,7 +2,7 @@
 
 All notable user-facing changes to RunCove are documented in this file.
 
-## [0.2.0] - 2026-08-11
+## [0.2.0] - 2026-08-12
 
 RunCove replaces the original port-only application in this repository while
 preserving the historical `portpeek` v0.1.0 release and tag.

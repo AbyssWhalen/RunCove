@@ -29,7 +29,7 @@ RunCove creates its own versioned SQLite database in the application-local data
 directory. It does not inspect or modify databases belonging to registered
 projects.
 
-## Verification Log
+## Initial Verification Log (2026-08-07)
 
 - Unchanged baseline formatting and Clippy checks passed after dependencies were
   available. The unchanged full test suite timed out because Windows process
@@ -91,7 +91,8 @@ projects.
     289.645 MiB to 301.973 MiB, ranged from 277.625 MiB to 330.863 MiB, and had
     a +4.409032 MiB/minute fitted slope. The samples do not show unbounded
     process-count or working-set growth, but private memory is not claimed flat;
-    a longer soak remains appropriate before public release.
+    a longer soak was not completed before `v0.2.0` publication and remains a
+    post-release performance follow-up.
 - Image generation was unavailable with HTTP 403. The checked-in deterministic
   `source.svg` and generated Tauri icon set are the local fallback.
 - Runtime data was observed at
@@ -354,14 +355,9 @@ projects.
 
 ## Unresolved Issues
 
-- Public trademark, domain, crates.io, and npm name clearance for `RunCove` is
-  outside this local implementation and remains pending before publication.
-- A native smoke test of the newest 2026-08-10 executable remains optional. An
-  earlier isolated QA flavor proved native process, database, and WebView
-  initialization, while browser-mode QA covers the final UI source. The prior
-  Help-build instance was gone after the post-reboot check; no RunCove
-  executable was replaced. The ask/hide/quit title-bar paths should still be
-  manually exercised in an explicitly authorized smoke instance.
+- Formal trademark, domain, crates.io, and npm registry clearance for `RunCove`
+  was not part of the `v0.2.0` repository release. Repeat name clearance before
+  wider package-manager or commercial distribution.
 - The real Windows UAC cancel and successful relaunch paths were not invoked in
   unattended validation because they require desktop interaction and would
   close the current RunCove instance. Token checks, denial mapping, instance
@@ -570,12 +566,13 @@ projects.
     `13D11F813CE72FB9164B7C4452F925E106938C89559CAE15CACE710A4FEF141C`.
 - CI/release workflows now cover the desktop and new artifact names. GitHub is
   the authoritative workflow parser because no local YAML checker is installed;
-  publication remains incomplete until PR CI, merge, tag, workflow, and asset
-  download verification all pass.
+  at this checkpoint publication was incomplete pending PR CI, merge, tag,
+  workflow, and asset download verification.
 
 ## 2026-08-11 Windows Resource Linker Follow-up
 
-- Draft PR CI run `31493311756` reached the desktop Rust test link and failed
+- PR CI run `31493311756`, while PR #1 was still a draft, reached the desktop
+  Rust test link and failed
   with `CVT1100: duplicate resource. type:VERSION` and `LNK1123`. The linker
   command contained the same generated `resource.lib` twice because
   `tauri_build::build()` linked it to binary targets and the custom build step
@@ -634,7 +631,8 @@ projects.
 
 ## 2026-08-12 Elevated Runner Test Isolation
 
-- Commit `c281340` was pushed once to Draft PR #1. CI run `31501585406` passed
+- Commit `c281340` was pushed once while PR #1 was still a draft. CI run
+  `31501585406` passed
   all three CLI jobs, root Rust lint, frontend audit/lint/typecheck/tests/build,
   Edge browser workflows, desktop formatting, and desktop Clippy. The MSVC test
   harness started normally and ran 99 tests, proving the manifest resource fix.
@@ -652,3 +650,38 @@ projects.
 - Independent review found no production security regression. Post-fix desktop
   format, warnings-denied Clippy, and all targets passed locally: `99 passed / 1
   ignored`. No CI or release workflow file was changed.
+
+## 2026-08-12 v0.2.0 Publication
+
+- PR #1 merged into `main` as
+  `9b935857fcc79b2811a5a1fb16df9aae55a91e7a`. PR CI run `31561867655` and the
+  resulting `main` CI run `31562443457` both completed successfully across the
+  configured CLI and Windows desktop jobs.
+- Annotated tag `v0.2.0` points to `9b93585`. Release workflow run
+  `31563084142` completed successfully and published the non-draft,
+  non-prerelease latest release at
+  <https://github.com/AbyssWhalen/portpeek/releases/tag/v0.2.0>.
+- The published release has six assets: Linux x64, macOS x64, macOS arm64, and
+  Windows x64 CLI archives; the Windows x64 portable desktop archive; and
+  `SHA256SUMS.txt`. Freshly downloaded asset digests matched GitHub metadata,
+  all five archive hashes matched the checksum file, and every archive extracted
+  with the expected files and executable format.
+- Verified archive SHA-256 values:
+  - Linux x64 CLI: `817BE042DCBCB3C747E5E08E450E7B4C2957FB00BDDC8BEA247F8B29C611A3E2`
+  - macOS arm64 CLI: `795671AA37EB384FD943C8C8AA95527F90878902486113FD181A3AF6E84F1E87`
+  - macOS x64 CLI: `6401B3B126358708B39F6E4157EB085B2DE0E91A74E1339C8309740F078F98CF`
+  - Windows x64 CLI: `CFE0090E62180D7779A76418A57FE513746B06EEB6A86E5DA2A672BAAF9B5041`
+  - Windows x64 desktop: `BE99C188B6DEF910D5DE4ADEA02028EF8410D0D46AD6B500FF2095D341BF6A7E`
+- The published Windows desktop executable is `12,692,992` bytes, reports file
+  and product version `0.2.0`, and is unsigned as documented. The CLI archives
+  contain both `runcove` and `portpeek`; release-package compatibility checks
+  matched JSON, range-filter, and error exit-code behavior.
+- `gh release download` could not validate the local certificate chain
+  (`x509: certificate signed by unknown authority`). Public release URLs were
+  therefore downloaded with Windows `curl.exe`, then independently hashed and
+  inspected. This was a local client trust-store limitation, not a release
+  failure.
+- The existing public repository remains named `portpeek` to preserve old links
+  and retains its historical `v0.1.0` release. Its description and topics now
+  identify RunCove. No force-push, history rewrite, repository rename, larger
+  runner, or removal of the old release occurred.

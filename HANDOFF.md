@@ -1,9 +1,45 @@
 # RunCove Handoff
 
-## Current Checkpoint (2026-08-12)
+## Current Published Checkpoint (2026-08-12)
 
-- Draft PR #1 remains open at remote head `c281340`. The Windows resource split
-  is pushed and CI run `31501585406` proved that the MSVC library test harness
+- RunCove `v0.2.0` is published in the existing public
+  `AbyssWhalen/portpeek` repository. PR #1 is merged, and release source commit
+  `9b935857fcc79b2811a5a1fb16df9aae55a91e7a` is the annotated `v0.2.0` tag.
+  The historical `v0.1.0` tag and release remain unchanged; the repository was
+  not renamed and no history was rewritten.
+- PR CI run `31561867655`, `main` CI run `31562443457`, and release workflow run
+  `31563084142` all completed successfully. The release is neither a draft nor
+  a prerelease and is marked latest:
+  <https://github.com/AbyssWhalen/portpeek/releases/tag/v0.2.0>.
+- The release contains five binary archives plus `SHA256SUMS.txt`: four
+  cross-platform CLI archives and the Windows x64 portable desktop archive.
+  All six GitHub asset digests were compared with fresh downloads, all five
+  archive checksums match `SHA256SUMS.txt`, every archive extracts, and the
+  contained binaries have the expected ELF, Mach-O, or PE formats. The Windows
+  desktop executable reports file/product version `0.2.0` and is unsigned as
+  documented.
+- The Windows release preserves both `runcove.exe` and the `portpeek.exe`
+  compatibility entry point. Their JSON, range filtering, and error exit-code
+  behavior matched in release-package smoke checks. `portpeek.exe --help`
+  displays the compatibility executable name; `--version` intentionally reports
+  the shared product version `runcove 0.2.0`.
+- The GitHub description and topics identify RunCove while retaining the
+  `portpeek` repository URL for existing links. Only standard hosted runners are
+  used; no larger runner is configured. This post-release documentation
+  checkpoint does not alter the `v0.2.0` tag or published assets.
+- Remaining follow-ups are non-blocking: real interactive UAC cancel/success
+  smoke coverage, a stricter environment-driven live-port acceptance schema,
+  longer idle performance observation, and renewed name clearance before wider
+  package-manager or commercial distribution.
+
+## Pre-publication Checkpoint (Historical, 2026-08-12)
+
+The following section records the final CI diagnosis and release preparation as
+they stood before PR #1 was merged. Pending-push and pending-publication
+statements below are historical, not current instructions.
+
+- Draft PR #1 remained open at remote head `c281340`. The Windows resource split
+  had been pushed and CI run `31501585406` proved that the MSVC library test harness
   now starts and runs all tests, so the prior resource failures are resolved.
   That run exposed one separate test isolation defect: GitHub's Windows runner
   is elevated, while `successful_tray_stop_all_synchronizes_an_empty_restore_set`
@@ -16,7 +52,7 @@
   a denied monitor-only action that preserves the restore set. Independent
   review found no production security regression. Desktop format,
   warnings-denied Clippy, and the complete local suite pass with `99 passed / 1
-  ignored`. This follow-up is not pushed yet.
+  ignored`. This follow-up had not been pushed at that checkpoint.
 - Earlier resource diagnosis remains relevant: run `31493311756` failed when
   the MSVC linker received Tauri's VERSION resource twice, and run
   `31496735900` exposed `STATUS_ENTRYPOINT_NOT_FOUND` when the library test
@@ -80,12 +116,14 @@
   `C80B1B6601ED42A34F333773A3C5997FDDFBA74E7B81610F490479F931192A13`).
   Its local portable zip has SHA-256
   `E49A9408FE2BE7A89ACCC23376956C4627E8C781682CC05C68B00860C94CEA50`.
-- Native smoke proved the final process remains PID 33824 after the title-bar X
+- Native smoke proved the final process remained PID 33824 after the title-bar X
   hides it and a second launch restores the same window; process count remains
   one. The old pre-fix PID 9728 was identity-checked, found to contain only
-  RunCove/WebView2 processes, and stopped. The final instance is left running.
-- GitHub publication is not complete. PR #1 is still Draft and the final local
-  resource fix has not advanced the remote branch.
+  RunCove/WebView2 processes, and stopped. That instance was left running at
+  this historical checkpoint and is no longer a statement about current runtime
+  state.
+- At this historical checkpoint, GitHub publication was not complete: PR #1 was
+  still Draft and the final local resource fix had not advanced the branch.
 
 - Replaced the internal-sounding restore-set labels with user-facing language:
   Overview, Help, the elevation explanation, and native tray now consistently
@@ -137,7 +175,7 @@
   It builds and serves the production bundle, avoiding Vite development-mode
   cold-module stalls. The compact flow switches to `zh-CN` and back to English;
   all flows assert drawer, dialog, and expanded port-detail viewport bounds.
-- Current final verification is green: root Rust format/Clippy/37 tests;
+- Verification at that checkpoint was green: root Rust format/Clippy/37 tests;
   desktop Rust format/Clippy/96 tests with one explicit live test ignored;
   frontend lint, typecheck, 85 tests, production build, and 3 Playwright flows
   that cover Help, close choice, and project deletion at all target viewports.
@@ -161,7 +199,7 @@
   `900x600-help-close-reset.png` under
   `apps/desktop/output/playwright/qa-20260810-close/`. The preview session and
   its port 1422 listener were identity-checked and stopped afterward.
-- The current isolated release executable is
+- The isolated release executable at that checkpoint was
   `apps/desktop/src-tauri/target/final-20260811-understandability/release/runcove-desktop.exe`
   (`25,314,504` bytes, SHA-256
   `80A5729A1D58531BCC005B0CBB1F6216C36B9D2908DC260150C5ED4A69664CEC`).
@@ -381,16 +419,13 @@
 
 ## Next Session Prompt
 
-RunCove `v0.2.0` is implemented, fully reverified, release-built, packaged, and
-native-smoked, including real hide-to-tray and second-launch wake behavior.
-Start by reading the current checkpoint above and `notes.md`; do not repeat the
-completed hardening or resource diagnosis. PR #1 is at `c281340`; resource
-linking is fixed, and the only remaining local change makes the tray stop-all
-test independent of the runner's administrator state. It passes format,
-warnings-denied Clippy, and `99 passed / 1 ignored` locally and still needs one
-focused commit/push, PR CI, merge, tag, release, and asset verification. The
-repository is public and its standard hosted runners do not incur Actions
-compute charges. Preserve historical `v0.1.0`, do not rename the remote
-repository, and do not stop unrelated development services.
-Real UAC cancel/success and a longer idle soak remain residual manual checks and
-must not be overstated.
+RunCove `v0.2.0` is already merged and published from release commit `9b93585` in
+the existing `AbyssWhalen/portpeek` repository. Start with the published
+checkpoint above and the final publication record in `notes.md`; do not repeat
+the completed resource diagnosis, PR, tag, release, or asset verification.
+Treat subsequent work as post-release maintenance or a new version. Preserve
+the historical `v0.1.0` tag/release, keep the remote repository name for link
+compatibility unless separately authorized, and do not stop unrelated local
+development services. Real interactive UAC cancel/success, a stricter live-port
+acceptance schema, and longer idle observation remain residual checks and must
+not be overstated.
