@@ -5,7 +5,7 @@ All notable user-facing changes to RunCove are documented in this file.
 ## [0.2.0] - 2026-08-12
 
 RunCove replaces the original port-only application in this repository while
-preserving the historical `portpeek` v0.1.0 release and tag.
+preserving the original v0.1.0 CLI release and tag.
 
 ### Added
 
@@ -41,9 +41,9 @@ preserving the historical `portpeek` v0.1.0 release and tag.
 ### Compatibility
 
 - `runcove` is the primary CLI command.
-- `portpeek` remains available as a compatibility entry point with the legacy
-  flags, JSON fields, and exit-code behavior.
-- The repository URL remains `https://github.com/AbyssWhalen/portpeek`.
+- A compatibility CLI entry point remains available with the original flags,
+  JSON fields, and exit-code behavior.
+- The canonical repository URL is `https://github.com/AbyssWhalen/RunCove`.
 
 ### Known Limitations
 
@@ -60,5 +60,5 @@ preserving the historical `portpeek` v0.1.0 release and tag.
 
 ## [0.1.0]
 
-- Historical `portpeek` CLI release. Its Git tag and GitHub release are retained
+- Historical pre-RunCove CLI release. Its Git tag and GitHub release are retained
   unchanged for existing users and scripts.

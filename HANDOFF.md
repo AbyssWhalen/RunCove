@@ -2,15 +2,19 @@
 
 ## Current Published Checkpoint (2026-08-12)
 
-- RunCove `v0.2.0` is published in the existing public
-  `AbyssWhalen/portpeek` repository. PR #1 is merged, and release source commit
+- The GitHub repository is now canonically named `AbyssWhalen/RunCove`; the
+  local `origin` remote and Cargo metadata use the renamed URL. The public
+  description explains the port monitor, npm launch, process, log, and restore
+  workflows in one sentence.
+- RunCove `v0.2.0` is published in the public
+  `AbyssWhalen/RunCove` repository. PR #1 is merged, and release source commit
   `9b935857fcc79b2811a5a1fb16df9aae55a91e7a` is the annotated `v0.2.0` tag.
   The historical `v0.1.0` tag and release remain unchanged; the repository was
-  not renamed and no history was rewritten.
+  renamed without rewriting history.
 - PR CI run `31561867655`, `main` CI run `31562443457`, and release workflow run
   `31563084142` all completed successfully. The release is neither a draft nor
   a prerelease and is marked latest:
-  <https://github.com/AbyssWhalen/portpeek/releases/tag/v0.2.0>.
+  <https://github.com/AbyssWhalen/RunCove/releases/tag/v0.2.0>.
 - The release contains five binary archives plus `SHA256SUMS.txt`: four
   cross-platform CLI archives and the Windows x64 portable desktop archive.
   All six GitHub asset digests were compared with fresh downloads, all five
@@ -18,13 +22,11 @@
   contained binaries have the expected ELF, Mach-O, or PE formats. The Windows
   desktop executable reports file/product version `0.2.0` and is unsigned as
   documented.
-- The Windows release preserves both `runcove.exe` and the `portpeek.exe`
-  compatibility entry point. Their JSON, range filtering, and error exit-code
-  behavior matched in release-package smoke checks. `portpeek.exe --help`
-  displays the compatibility executable name; `--version` intentionally reports
-  the shared product version `runcove 0.2.0`.
-- The GitHub description and topics identify RunCove while retaining the
-  `portpeek` repository URL for existing links. Only standard hosted runners are
+- The Windows release preserves the primary `runcove.exe` CLI and a separate
+  compatibility executable for existing scripts. Their JSON, range filtering,
+  and error exit-code behavior matched in release-package smoke checks.
+- The GitHub description and topics identify RunCove at its renamed canonical
+  URL. Only standard hosted runners are
   used; no larger runner is configured. This post-release documentation
   checkpoint does not alter the `v0.2.0` tag or published assets.
 - Remaining follow-ups are non-blocking: real interactive UAC cancel/success
@@ -73,7 +75,7 @@ statements below are historical, not current instructions.
 - The npm process fixture now keeps its listener open for eight seconds instead
   of two. This removes a reproduced full-suite timing race without changing
   product timeouts; the focused test and both complete GNU/MSVC suites pass.
-- `AbyssWhalen/portpeek` is public and both workflows use only standard
+- `AbyssWhalen/RunCove` is public and both workflows use only standard
   `ubuntu-latest`, `macos-latest`, and `windows-latest` runners. GitHub's
   current billing documentation says those runner minutes are free and
   unlimited for public repositories; larger runners and excess artifact/cache
@@ -219,7 +221,7 @@ statements below are historical, not current instructions.
 
 ## Milestone History
 
-- Completed: cloned `AbyssWhalen/portpeek` at commit
+- Completed: cloned the original port-inspection repository at commit
   `a6fb18d0dd79a0abc986de984c3ebca1ec6305c7` into the local `runcove` directory.
 - Completed: established project instructions and implementation boundaries.
 - Completed: renamed the root crate to `runcove`, extracted a shared CLI entry,
@@ -354,7 +356,7 @@ statements below are historical, not current instructions.
 ## Decisions
 
 - Product and primary command: `RunCove` / `runcove`.
-- Legacy `portpeek` command remains compatible.
+- A compatibility CLI command remains available for existing scripts.
 - Windows 11 desktop app with tray; no application or project autostart.
 - SQLite is isolated to RunCove's application-local data directory.
 - Project registration or explicit confirmation is authoritative; inference is
@@ -420,12 +422,11 @@ statements below are historical, not current instructions.
 ## Next Session Prompt
 
 RunCove `v0.2.0` is already merged and published from release commit `9b93585` in
-the existing `AbyssWhalen/portpeek` repository. Start with the published
+the `AbyssWhalen/RunCove` repository. Start with the published
 checkpoint above and the final publication record in `notes.md`; do not repeat
-the completed resource diagnosis, PR, tag, release, or asset verification.
+  the completed resource diagnosis, PR, tag, release, or asset verification.
 Treat subsequent work as post-release maintenance or a new version. Preserve
-the historical `v0.1.0` tag/release, keep the remote repository name for link
-compatibility unless separately authorized, and do not stop unrelated local
-development services. Real interactive UAC cancel/success, a stricter live-port
-acceptance schema, and longer idle observation remain residual checks and must
-not be overstated.
+the historical `v0.1.0` tag/release and do not stop unrelated local development
+services. Real interactive UAC cancel/success, a stricter live-port acceptance
+schema, and longer idle observation remain residual checks and must not be
+overstated.

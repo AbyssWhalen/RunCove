@@ -4,13 +4,13 @@
 
 RunCove v0.2.0 is a Windows-first desktop control center for local development services. It combines live port inspection with a trusted project registry, structured launch profiles, process-tree control, session logs, and on-demand restoration of the projects that were running before the app exited.
 
-The repository also ships the cross-platform `runcove` port-inspection CLI. Existing scripts can continue to call the legacy `portpeek` binary, which uses the same shared CLI implementation.
+The distribution also includes the cross-platform `runcove` port-inspection CLI. The desktop application is Windows-first; the CLI is available on Windows, macOS, and Linux.
 
-The v0.2.0 release is distributed as a portable Windows x64 zip from this repository's [Releases page](https://github.com/AbyssWhalen/portpeek/releases). The repository keeps the historical `portpeek` v0.1.0 release and tag; RunCove starts at v0.2.0 so existing release history is not rewritten.
+The v0.2.0 release is distributed as a portable Windows x64 zip from the [RunCove Releases page](https://github.com/AbyssWhalen/RunCove/releases). The original v0.1.0 CLI release remains available in the release history for existing installations.
 
 ## Download And Run
 
-1. Download the RunCove v0.2.0 Windows x64 portable zip from the [Releases page](https://github.com/AbyssWhalen/portpeek/releases).
+1. Download the RunCove v0.2.0 Windows x64 portable zip from the [Releases page](https://github.com/AbyssWhalen/RunCove/releases).
 2. Extract the zip to a directory you control.
 3. Run `runcove-desktop.exe`.
 
@@ -49,7 +49,7 @@ For the Windows desktop app, install:
 Clone the repository, then start the desktop app:
 
 ```powershell
-git clone https://github.com/AbyssWhalen/portpeek.git runcove
+git clone https://github.com/AbyssWhalen/RunCove.git runcove
 cd runcove\apps\desktop
 npm ci
 npm run tauri dev
@@ -75,23 +75,25 @@ cargo run --bin runcove -- --range 3000-4000 --json
 cargo run --bin runcove -- --watch -w 2
 ```
 
-Install both local CLI binaries from source:
+Install the RunCove CLI from source:
 
 ```powershell
 cargo install --path .
 runcove --version
-portpeek --version
 ```
 
-`portpeek` is a compatibility entry point for the existing command surface:
+The primary command surface is `runcove`:
 
 ```powershell
-portpeek
-portpeek 8080
-portpeek --all --json
-portpeek kill 8080
-portpeek open 3000
+runcove
+runcove 8080
+runcove --all --json
+runcove kill 8080
+runcove open 3000
 ```
+
+Release archives also contain a compatibility executable for existing scripts.
+New integrations should use `runcove`.
 
 The CLI supports TCP/UDP inspection on Windows, Linux, and macOS, including process filters, port ranges, JSON output, continuous watch mode, opening a local TCP port in the browser, and an interactive or forced `kill` command. The desktop app remains Windows-first.
 
@@ -101,7 +103,7 @@ The CLI supports TCP/UDP inspection on Windows, Linux, and macOS, including proc
 runcove/
 |- src/                         # Shared Rust scanner, CLI, renderers, process helpers
 |- src/main.rs                  # runcove binary
-|- src/bin/portpeek.rs          # Legacy compatibility binary
+|- src/bin/portpeek.rs          # Compatibility CLI entry point
 |- tests/                       # Scanner and CLI regression tests
 `- apps/desktop/
    |- src/                      # React + TypeScript interface
@@ -177,4 +179,4 @@ RunCove v0.2.0 focuses on reliable Windows port and process lifecycle management
 
 ## License
 
-[MIT](LICENSE) - Copyright (c) 2026 AbyssWhalen, RunCove contributors, and portpeek contributors
+[MIT](LICENSE) - Copyright (c) 2026 AbyssWhalen and RunCove contributors

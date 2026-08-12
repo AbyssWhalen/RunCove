@@ -5,8 +5,8 @@
 RunCove is a Windows-first local development runtime center. It monitors local
 ports, associates trusted project configurations with processes, launches and
 stops development commands, captures session logs, and restores the last run
-set on demand. The existing cross-platform port-inspection CLI remains
-supported through `runcove` and the legacy `portpeek` command.
+set on demand. The cross-platform port-inspection CLI is also maintained as
+part of the RunCove distribution.
 
 ## Structure
 

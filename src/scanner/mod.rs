@@ -77,7 +77,7 @@ pub fn create_scanner() -> Box<dyn PortScanner> {
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
-        compile_error!("portpeek does not support this platform yet");
+        compile_error!("RunCove does not support this platform yet");
     }
 }
 

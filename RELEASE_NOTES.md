@@ -1,8 +1,8 @@
 # RunCove v0.2.0
 
 RunCove turns the original port-only repository into a Windows-first local
-development runtime center while preserving the `portpeek` command as a
-compatible CLI entry point.
+development runtime center. The distribution includes the `runcove` CLI and a
+compatibility executable for existing scripts.
 
 ## Highlights
 
@@ -34,8 +34,8 @@ compatible CLI entry point.
 
 - `runcove-desktop-windows-x86_64-portable.zip` contains the Windows desktop
   application.
-- `runcove-cli-*` archives contain both the new `runcove` CLI and the legacy
-  `portpeek` compatibility command.
+- `runcove-cli-*` archives contain the `runcove` CLI and a compatibility
+  executable for existing scripts.
 - `SHA256SUMS.txt` contains checksums for every binary archive.
 
 The Windows desktop executable is portable and unsigned. Windows SmartScreen
@@ -43,4 +43,4 @@ may show an unknown-publisher warning. Verify the archive against
 `SHA256SUMS.txt` and download it only from this GitHub release. Microsoft Edge
 WebView2 Runtime is required and is included with current Windows 11 systems.
 
-The historical `v0.1.0` tag and release remain unchanged.
+The original `v0.1.0` tag and release remain unchanged.

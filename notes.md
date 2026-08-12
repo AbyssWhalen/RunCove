@@ -40,7 +40,7 @@ projects.
   - `cargo clippy --offline --all-targets --all-features -- -D warnings`:
     passed with warnings denied.
   - `cargo test --offline --all-targets`: passed, 34 tests total.
-  - Both `runcove --help` and `portpeek --help` executed successfully.
+- Both the primary and compatibility CLI help paths executed successfully.
   - Both binaries passed the same non-destructive argument and exit-code
     compatibility matrix; a fixture test locks the legacy JSON field names.
   - A live Windows scan resolved process names for 133 of 133 entries and took
@@ -432,10 +432,10 @@ projects.
   `src/scanner/windows.rs`, `tests/cli_tests.rs`, and
   `tests/scanner_tests.rs`.
 - New root paths are `AGENTS.md`, `HANDOFF.md`, `notes.md`,
-  `src/bin/portpeek.rs`, and `src/cli_app.rs`. The remaining 117 new paths are
+  the compatibility CLI entry point, and `src/cli_app.rs`. The remaining 117 new paths are
   under `apps/desktop`, including the complete frontend/backend application, 53
   generated Tauri icon assets, and 17 Playwright QA screenshots.
-- Root changes cover crate naming, shared `runcove`/`portpeek` CLI entrypoints,
+- Root changes cover crate naming, shared primary/compatibility CLI entrypoints,
   Windows scanning and verified process-tree termination, plus regression tests.
 - `apps/desktop` contains the React client, typed IPC adapter, deterministic
   browser mock, Tauri backend, SQLite migrations, generated icon set, and QA
@@ -561,7 +561,7 @@ projects.
   - Desktop portable zip contains `runcove-desktop.exe`, `README.md`,
     `CHANGELOG.md`, and `LICENSE`; SHA-256
     `E49A9408FE2BE7A89ACCC23376956C4627E8C781682CC05C68B00860C94CEA50`.
-  - Windows CLI zip contains `runcove.exe`, `portpeek.exe`, and the same three
+  - Windows CLI zip contains the primary and compatibility executables, plus the same three
     documents; SHA-256
     `13D11F813CE72FB9164B7C4452F925E106938C89559CAE15CACE710A4FEF141C`.
 - CI/release workflows now cover the desktop and new artifact names. GitHub is
@@ -660,7 +660,7 @@ projects.
 - Annotated tag `v0.2.0` points to `9b93585`. Release workflow run
   `31563084142` completed successfully and published the non-draft,
   non-prerelease latest release at
-  <https://github.com/AbyssWhalen/portpeek/releases/tag/v0.2.0>.
+  <https://github.com/AbyssWhalen/RunCove/releases/tag/v0.2.0>.
 - The published release has six assets: Linux x64, macOS x64, macOS arm64, and
   Windows x64 CLI archives; the Windows x64 portable desktop archive; and
   `SHA256SUMS.txt`. Freshly downloaded asset digests matched GitHub metadata,
@@ -674,14 +674,31 @@ projects.
   - Windows x64 desktop: `BE99C188B6DEF910D5DE4ADEA02028EF8410D0D46AD6B500FF2095D341BF6A7E`
 - The published Windows desktop executable is `12,692,992` bytes, reports file
   and product version `0.2.0`, and is unsigned as documented. The CLI archives
-  contain both `runcove` and `portpeek`; release-package compatibility checks
+  contain the primary and compatibility CLI executables; release-package compatibility checks
   matched JSON, range-filter, and error exit-code behavior.
 - `gh release download` could not validate the local certificate chain
   (`x509: certificate signed by unknown authority`). Public release URLs were
   therefore downloaded with Windows `curl.exe`, then independently hashed and
   inspected. This was a local client trust-store limitation, not a release
   failure.
-- The existing public repository remains named `portpeek` to preserve old links
-  and retains its historical `v0.1.0` release. Its description and topics now
-  identify RunCove. No force-push, history rewrite, repository rename, larger
-  runner, or removal of the old release occurred.
+- The public repository is now named `RunCove`; its historical v0.1.0 release
+  remains available. Its description and topics identify the current product.
+  No force-push, history rewrite, larger runner, or removal of the old release
+  occurred.
+
+## 2026-08-12 Repository Branding Alignment
+
+- GitHub renamed the public repository to `AbyssWhalen/RunCove`. The local
+  `origin` remote and Cargo package metadata now use the canonical URL
+  `https://github.com/AbyssWhalen/RunCove`.
+- The repository description now says: `RunCove is a Windows-first desktop app
+  for monitoring local ports, launching npm projects, managing process trees,
+  viewing logs, and restoring development services.`
+- README, changelog, release notes, handoff, and implementation notes now use
+  RunCove as the public product name. The compatibility CLI remains in code and
+  tests for existing scripts, but new documentation presents `runcove` as the
+  only primary command.
+- The existing `v0.2.0` tag, six release assets, historical `v0.1.0` release,
+  and CI/release workflows were not rebuilt or rewritten. Root Rust format,
+  warnings-denied Clippy, and all root targets passed after the metadata and
+  unsupported-platform message update.
