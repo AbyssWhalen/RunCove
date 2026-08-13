@@ -66,6 +66,35 @@
   automation, Docker/remote management, `.env` editing, or persistent log
   archive was added.
 
+## v0.2.1 Publication (2026-08-13)
+
+- PR #2 merged into `main` as
+  `a771c55f402bcdce3d0ec29fe739d4e47bd847c5`. Main CI run `31691103911`
+  completed successfully across all configured CLI, Rust lint, frontend,
+  browser, and Windows desktop checks.
+- Release documentation was recorded without changing the code tree. Annotated
+  tag `v0.2.1` targets release commit
+  `5e3e0d4d63ae04fe8e27c37c4500d3bd9ef75f13`.
+- Release workflow `31692200475` completed successfully and published the
+  latest, non-draft, non-prerelease release at
+  <https://github.com/AbyssWhalen/RunCove/releases/tag/v0.2.1>.
+- The release contains six assets: four cross-platform CLI archives, the
+  Windows x64 portable desktop archive, and `SHA256SUMS.txt`. GitHub's SHA-256
+  digest for every archive matches the corresponding checksum-file entry:
+  - Linux x64 CLI: `109FE838A097D4312434FB4D4597DF9110E9A9BFCF8D0FC37A8C676284BA5A7F`
+  - macOS arm64 CLI: `CD689CD9635A40C4D243CEC2759BE45DD796FC343FD1869B685D7E4826114EEE`
+  - macOS x64 CLI: `4D287D0EDC27C0C76D527124B97634FF9B972062FB9E5699C35F509D98B6E688`
+  - Windows x64 CLI: `7C2DB4C3BA9DE7641DF92F5363D478BBACC2BCF206F8614A6B075FD37F45676A`
+  - Windows x64 desktop: `58CAB696B97FAE7EDF5E273FA57D32984F826B01F3473FE7AB008CEBF8436096`
+- A redundant main CI run created by the no-content release marker was canceled
+  because the identical code tree had just passed run `31691103911`; no job was
+  manually rerun. Release annotations only report GitHub's Node.js 20 action
+  deprecation warning and did not affect the successful build or publication.
+- Local Git HTTPS pushes triggered a Windows `git-remote-https.exe` crash dialog.
+  Further publication writes used the authenticated GitHub API instead, and no
+  Git or Git remote helper process remained afterward. No unrelated application,
+  project, or development process was stopped or modified.
+
 ## Approved Product Decisions
 
 - Windows 11 is the first desktop target; the scanning core and CLI retain their

@@ -1,11 +1,17 @@
 # RunCove Handoff
 
-## 2026-08-13 v0.2.1 Release Candidate
+## 2026-08-13 v0.2.1 Published
 
 - Status: the approved implementation and full local verification are complete.
   PR #2 merged into `main` as `a771c55f402bcdce3d0ec29fe739d4e47bd847c5`.
-  The release tag and GitHub Release are pending final main-branch CI and release
-  documentation; no unrelated process action has occurred.
+  Main CI run `31691103911` passed, and annotated tag `v0.2.1` targets release
+  commit `5e3e0d4d63ae04fe8e27c37c4500d3bd9ef75f13`.
+- Published: Release workflow `31692200475` completed successfully and created
+  the latest, non-draft, non-prerelease release at
+  <https://github.com/AbyssWhalen/RunCove/releases/tag/v0.2.1>.
+- Assets: four cross-platform CLI archives, the Windows x64 portable desktop
+  archive, and `SHA256SUMS.txt` are present. All five archive digests match the
+  published checksum file.
 - Completed: run history, structured conflict navigation, discovery states and
   retry, profile duplication and validation, port-detail copy controls, and
   bilingual Help are implemented. Package and application metadata now report
@@ -23,10 +29,10 @@
 - Residual boundaries: desktop remains Windows-first, historical logs are not
   archived, and the explicitly configured live-service acceptance remains
   ignored by default. See `notes.md` for complete evidence.
-- Next session prompt: read `AGENTS.md`, `V0.2.1_PLAN.md`, this checkpoint, and
-  `notes.md`; verify the v0.2.1 tag, Release workflow, published assets, and
-  checksums before declaring publication complete. Do not change workflows or
-  rerun GitHub jobs merely to repeat already-green evidence.
+- Next session prompt: RunCove `v0.2.1` is published. Read `AGENTS.md`, this
+  checkpoint, and `notes.md`, then treat further work as post-release
+  maintenance or a separately planned version. Do not rebuild or republish
+  `v0.2.1` merely to repeat already-green evidence.
 
 ## 2026-08-12 v0.2.1 Implementation Checkpoint
 
