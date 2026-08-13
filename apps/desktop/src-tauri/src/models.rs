@@ -103,6 +103,13 @@ pub enum RunStatus {
     Unknown,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RelatedPort {
+    pub port: u16,
+    pub protocol: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunStatusEvent {
@@ -110,6 +117,8 @@ pub struct RunStatusEvent {
     pub status: RunStatus,
     pub pid: Option<u32>,
     pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub related_port: Option<RelatedPort>,
     #[serde(default)]
     pub unexpected: bool,
     pub timestamp: i64,
@@ -280,6 +289,8 @@ pub struct RestoreResult {
     pub started_profile_ids: Vec<String>,
     pub failed_profile_id: Option<String>,
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub related_port: Option<RelatedPort>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -330,6 +341,35 @@ mod tests {
         let port = serde_json::to_value(port).unwrap();
         assert_eq!(port["profileId"], "profile");
         assert_eq!(port["protocol"], "tcp");
+    }
+
+    #[test]
+    fn run_events_use_optional_camel_case_related_port_context() {
+        let event = RunStatusEvent {
+            profile_id: "profile".into(),
+            status: RunStatus::Conflict,
+            pid: None,
+            message: Some("Expected port 5173 is already occupied".into()),
+            related_port: Some(RelatedPort {
+                port: 5173,
+                protocol: "tcp".into(),
+            }),
+            unexpected: false,
+            timestamp: 1,
+        };
+        let with_context = serde_json::to_value(event).unwrap();
+        assert_eq!(with_context["relatedPort"]["port"], 5173);
+        assert_eq!(with_context["relatedPort"]["protocol"], "tcp");
+        assert!(with_context.get("related_port").is_none());
+
+        let without_context = serde_json::to_value(RestoreResult {
+            started_profile_ids: Vec::new(),
+            failed_profile_id: None,
+            error: None,
+            related_port: None,
+        })
+        .unwrap();
+        assert!(without_context.get("relatedPort").is_none());
     }
 
     #[test]

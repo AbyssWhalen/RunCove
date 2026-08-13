@@ -131,7 +131,13 @@ export interface RunStatusEvent {
   pid?: number | null;
   message?: string | null;
   unexpected?: boolean;
+  relatedPort?: RelatedPort | null;
   timestamp: number;
+}
+
+export interface RelatedPort {
+  port: number;
+  protocol: Protocol;
 }
 
 export interface RunLogEvent {
@@ -141,6 +147,13 @@ export interface RunLogEvent {
   timestamp: number;
 }
 
+export type RunSessionStatus =
+  | "starting"
+  | "running"
+  | "exited"
+  | "interrupted"
+  | "unknown";
+
 export interface RunSession {
   id: string;
   profileId?: string | null;
@@ -149,13 +162,14 @@ export interface RunSession {
   startedAt: number;
   endedAt?: number | null;
   exitCode?: number | null;
-  status: string;
+  status: RunSessionStatus;
 }
 
 export interface RestoreResult {
   startedProfileIds: string[];
   failedProfileId?: string | null;
   error?: string | null;
+  relatedPort?: RelatedPort | null;
 }
 
 export interface ExternalProcessRequest {

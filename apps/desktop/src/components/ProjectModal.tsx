@@ -1,4 +1,4 @@
-import { FolderOpen, FolderSearch, FolderTree, Plus, Trash2, X } from "lucide-react";
+import { Copy, FolderOpen, FolderSearch, FolderTree, Plus, Trash2, X } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { useI18n } from "../i18n";
@@ -9,6 +9,7 @@ import type {
   ProjectInput,
 } from "../types";
 import { IconButton } from "./IconButton";
+import { copyLaunchProfile, hasProjectValidationErrors, validateProjectInput } from "./project-validation";
 import { useDialogFocus } from "./useDialogFocus";
 
 interface ProjectModalProps {
@@ -105,15 +106,19 @@ export function ProjectModal({
   const [discovering, setDiscovering] = useState(false);
   const [pickingDirectory, setPickingDirectory] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showValidation, setShowValidation] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const discoveryInFlight = useRef(false);
   const pickerInFlight = useRef(false);
+  const initialRootProjectsHandled = useRef(false);
   const modalBusy = discovering || pickingDirectory || saving;
   const { dialogRef, onDialogKeyDown } = useDialogFocus(onClose, modalBusy);
   const registeredPathSet = useMemo(
     () => new Set(registeredPaths.map(normalizedPath)),
     [registeredPaths],
   );
+  const registeredPathSetRef = useRef(registeredPathSet);
+  registeredPathSetRef.current = registeredPathSet;
 
   useEffect(() => {
     setSelectedPaths((current) => new Set(
@@ -126,23 +131,22 @@ export function ProjectModal({
 
   useEffect(() => {
     if (!initialRootProjects) return;
-    setSelectedPaths(new Set(
+    const registered = registeredPathSetRef.current;
+    const availablePaths = new Set(
       initialRootProjects
-        .filter((item) => isImportableDiscovery(item, registeredPathSet))
+        .filter((item) => isImportableDiscovery(item, registered))
         .map((item) => item.path),
-    ));
-  }, [initialRootProjects, registeredPathSet]);
-
-  const valid = useMemo(() => {
-    if (!form?.name.trim() || !form.path.trim() || form.profiles.length === 0) return false;
-    return form.profiles.every((profile) =>
-      profile.name.trim() &&
-      profile.program.trim() &&
-      profile.cwd.trim() &&
-      profile.args.every((arg) => arg.trim()) &&
-      profile.expectedPorts.every((port) => Number.isInteger(port.port) && port.port > 0 && port.port <= 65_535),
     );
-  }, [form]);
+    const firstSync = !initialRootProjectsHandled.current;
+    initialRootProjectsHandled.current = true;
+    setRootProjects(initialRootProjects);
+    setSelectedPaths((current) => firstSync
+      ? availablePaths
+      : new Set([...current].filter((path) => availablePaths.has(path))));
+  }, [initialRootProjects]);
+
+  const validation = useMemo(() => form ? validateProjectInput(form) : null, [form]);
+  const valid = validation !== null && !hasProjectValidationErrors(validation);
 
   const discover = async () => {
     const target = directory.trim();
@@ -185,6 +189,7 @@ export function ProjectModal({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    setShowValidation(true);
     if (!form || !valid) return;
     setSaving(true);
     setError(null);
@@ -220,6 +225,7 @@ export function ProjectModal({
     setRootProjects(null);
     setSelectedPaths(new Set());
     setError(null);
+    setShowValidation(false);
   };
 
   const chooseDirectory = async () => {
@@ -245,6 +251,18 @@ export function ProjectModal({
         profileIndex === index ? { ...profile, ...update } : profile,
       ),
     }));
+  };
+
+  const duplicateProfile = (index: number) => {
+    setForm((current) => {
+      if (!current) return current;
+      const source = current.profiles[index];
+      if (!source) return current;
+      const duplicate = copyLaunchProfile(source, t("project.copySuffix"));
+      const profiles = [...current.profiles];
+      profiles.splice(index + 1, 0, duplicate);
+      return { ...current, profiles };
+    });
   };
 
   return (
@@ -449,15 +467,27 @@ export function ProjectModal({
             {error && <div className="inline-error" role="alert">{error}</div>}
           </div>
         ) : (
-          <form className="project-form" onSubmit={(event) => void submit(event)}>
+          <form className="project-form" noValidate onSubmit={(event) => void submit(event)}>
             <div className="form-grid form-grid--project">
               <label className="field">
                 <span>{t("project.name")}</span>
-                <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
+                <input
+                  value={form.name}
+                  aria-invalid={showValidation && Boolean(validation?.name)}
+                  aria-describedby={showValidation && validation?.name ? "project-name-error" : undefined}
+                  onChange={(event) => setForm({ ...form, name: event.target.value })}
+                />
+                {showValidation && validation?.name && <span className="field-error" id="project-name-error">{t("project.validation.required")}</span>}
               </label>
               <label className="field field--path">
                 <span>{t("project.directory")}</span>
-                <input value={form.path} onChange={(event) => setForm({ ...form, path: event.target.value })} />
+                <input
+                  value={form.path}
+                  aria-invalid={showValidation && Boolean(validation?.path)}
+                  aria-describedby={showValidation && validation?.path ? "project-path-error" : undefined}
+                  onChange={(event) => setForm({ ...form, path: event.target.value })}
+                />
+                {showValidation && validation?.path && <span className="field-error" id="project-path-error">{t("project.validation.required")}</span>}
               </label>
             </div>
 
@@ -484,6 +514,9 @@ export function ProjectModal({
             )}
 
             <div className="profile-editors">
+              {showValidation && validation?.profiles && (
+                <div className="inline-error" id="project-profiles-error" role="alert">{t("project.validation.profilesRequired")}</div>
+              )}
               {form.profiles.map((profile, index) => (
                 <section className="profile-editor" key={profile.id ?? `new-${index}`}>
                   <div className="profile-editor-title">
@@ -493,27 +526,59 @@ export function ProjectModal({
                         <span className="association-badge association-badge--suggested">{t("project.observed")}</span>
                       )}
                     </div>
-                    <IconButton
-                      label={t("project.removeProfile", { number: index + 1 })}
-                      tone="danger"
-                      disabled={form.profiles.length === 1}
-                      onClick={() => setForm({ ...form, profiles: form.profiles.filter((_, itemIndex) => itemIndex !== index) })}
-                    >
-                      <Trash2 size={14} />
-                    </IconButton>
+                    <div className="profile-editor-title-actions modal-action-group">
+                      <IconButton
+                        label={t("project.copyProfile", { number: index + 1 })}
+                        onClick={() => duplicateProfile(index)}
+                      >
+                        <Copy size={14} />
+                      </IconButton>
+                      <IconButton
+                        label={t("project.removeProfile", { number: index + 1 })}
+                        tone="danger"
+                        disabled={form.profiles.length === 1}
+                        onClick={() => setForm({ ...form, profiles: form.profiles.filter((_, itemIndex) => itemIndex !== index) })}
+                      >
+                        <Trash2 size={14} />
+                      </IconButton>
+                    </div>
                   </div>
                   <div className="form-grid form-grid--profile">
                     <label className="field">
                       <span>{t("project.profileName")}</span>
-                      <input value={profile.name} onChange={(event) => updateProfile(index, { name: event.target.value })} />
+                      <input
+                        value={profile.name}
+                        aria-invalid={showValidation && Boolean(validation?.profileErrors[index]?.name)}
+                        aria-describedby={showValidation && validation?.profileErrors[index]?.name ? `profile-${index}-name-error` : undefined}
+                        onChange={(event) => updateProfile(index, { name: event.target.value })}
+                      />
+                      {showValidation && validation?.profileErrors[index]?.name && (
+                        <span className="field-error" id={`profile-${index}-name-error`}>{t("project.validation.required")}</span>
+                      )}
                     </label>
                     <label className="field">
                       <span>{t("project.program")}</span>
-                      <input value={profile.program} onChange={(event) => updateProfile(index, { program: event.target.value })} />
+                      <input
+                        value={profile.program}
+                        aria-invalid={showValidation && Boolean(validation?.profileErrors[index]?.program)}
+                        aria-describedby={showValidation && validation?.profileErrors[index]?.program ? `profile-${index}-program-error` : undefined}
+                        onChange={(event) => updateProfile(index, { program: event.target.value })}
+                      />
+                      {showValidation && validation?.profileErrors[index]?.program && (
+                        <span className="field-error" id={`profile-${index}-program-error`}>{t("project.validation.required")}</span>
+                      )}
                     </label>
                     <label className="field field--wide">
                       <span>{t("project.workingDirectory")}</span>
-                      <input value={profile.cwd} onChange={(event) => updateProfile(index, { cwd: event.target.value })} />
+                      <input
+                        value={profile.cwd}
+                        aria-invalid={showValidation && Boolean(validation?.profileErrors[index]?.cwd)}
+                        aria-describedby={showValidation && validation?.profileErrors[index]?.cwd ? `profile-${index}-cwd-error` : undefined}
+                        onChange={(event) => updateProfile(index, { cwd: event.target.value })}
+                      />
+                      {showValidation && validation?.profileErrors[index]?.cwd && (
+                        <span className="field-error" id={`profile-${index}-cwd-error`}>{t("project.validation.required")}</span>
+                      )}
                     </label>
                     <div className="field field--args">
                       <span>{t("project.arguments")}</span>
@@ -522,6 +587,8 @@ export function ProjectModal({
                           <div className="argument-input-row" key={`argument-${argumentIndex}`}>
                             <input
                               aria-label={t("project.argumentLabel", { profile: index + 1, argument: argumentIndex + 1 })}
+                              aria-invalid={showValidation && Boolean(validation?.profileErrors[index]?.args[argumentIndex])}
+                              aria-describedby={showValidation && validation?.profileErrors[index]?.args[argumentIndex] ? `profile-${index}-argument-${argumentIndex}-error` : undefined}
                               value={argument}
                               onChange={(event) => updateProfile(index, {
                                 args: profile.args.map((item, itemIndex) => itemIndex === argumentIndex ? event.target.value : item),
@@ -536,6 +603,9 @@ export function ProjectModal({
                             >
                               <X size={14} />
                             </IconButton>
+                            {showValidation && validation?.profileErrors[index]?.args[argumentIndex] && (
+                              <span className="field-error" id={`profile-${index}-argument-${argumentIndex}-error`}>{t("project.validation.argumentRequired")}</span>
+                            )}
                           </div>
                         ))}
                         <button className="text-command" type="button" onClick={() => updateProfile(index, { args: [...profile.args, ""] })}>
@@ -553,6 +623,8 @@ export function ProjectModal({
                               min="1"
                               max="65535"
                               aria-label={t("project.expectedPortLabel", { profile: index + 1, port: portIndex + 1 })}
+                              aria-invalid={showValidation && Boolean(validation?.profileErrors[index]?.ports[portIndex])}
+                              aria-describedby={showValidation && validation?.profileErrors[index]?.ports[portIndex] ? `profile-${index}-port-${portIndex}-error` : undefined}
                               value={port.port || ""}
                               onChange={(event) => updateProfile(index, {
                                 expectedPorts: profile.expectedPorts.map((item, itemIndex) =>
@@ -581,6 +653,13 @@ export function ProjectModal({
                             >
                               <X size={14} />
                             </IconButton>
+                            {showValidation && validation?.profileErrors[index]?.ports[portIndex] && (
+                              <span className="field-error" id={`profile-${index}-port-${portIndex}-error`}>
+                                {validation.profileErrors[index].ports[portIndex] === "duplicate"
+                                  ? t("project.validation.duplicatePort")
+                                  : t("project.validation.portRange")}
+                              </span>
+                            )}
                           </div>
                         ))}
                         <button
@@ -599,11 +678,12 @@ export function ProjectModal({
               ))}
             </div>
 
+            {showValidation && !valid && form.profiles.length > 0 && <div className="inline-error" role="alert">{t("project.validation.fixErrors")}</div>}
             {error && <div className="inline-error" role="alert">{error}</div>}
             <div className="modal-actions">
               <div className="modal-action-group">
                 <button className="button button--secondary" type="button" onClick={onClose} disabled={modalBusy}>{t("action.cancel")}</button>
-                <button className="button button--primary" type="submit" disabled={!valid || saving}>
+                <button className="button button--primary" type="submit" disabled={form.profiles.length === 0 || saving}>
                   {saving ? t("project.saving") : t("project.save")}
                 </button>
               </div>

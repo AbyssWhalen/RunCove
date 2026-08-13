@@ -8,6 +8,40 @@ The distribution also includes the cross-platform `runcove` port-inspection CLI.
 
 The v0.2.0 release is distributed as a portable Windows x64 zip from the [RunCove Releases page](https://github.com/AbyssWhalen/RunCove/releases). The original v0.1.0 CLI release remains available in the release history for existing installations.
 
+## Development Status / 开发状态
+
+RunCove v0.2.1 is currently in development and has not been published. The
+latest public download remains v0.2.0. / RunCove v0.2.1 目前仍在开发中，尚未发布；
+当前公开下载版本仍为 v0.2.0。
+
+- **Run history / 运行历史:** Overview shows the five most recent managed
+  sessions, while the history drawer can search and filter up to 200 stored
+  records, retain deleted-project entries, and locate profiles that still
+  exist. / 概览显示最近 5 次托管会话；历史抽屉可搜索、筛选最多 200 条记录，保留已删除
+  项目的历史，并定位仍然存在的项目配置。
+- **Conflict recovery / 冲突处理:** Expected-port failures offer a
+  `View occupant` action that refreshes the snapshot and focuses the exact TCP
+  or UDP row. A disappeared listener is reported as changed instead of exposing
+  stale process actions. / 预期端口冲突可通过“查看占用”刷新快照并定位到准确的 TCP 或 UDP
+  行；占用已消失时会提示状态变化，不提供过期的进程操作。
+- **Project discovery / 项目发现:** Saved-root scans now expose scanning,
+  candidate, empty, and failure states with retry. Candidates still require
+  review and are never imported or launched automatically. / 已保存开发根目录的扫描现在
+  会明确显示扫描中、发现候选、无结果和失败状态，并支持重试；候选项目仍须人工确认，绝不会
+  自动导入或启动。
+- **Project editing / 项目编辑:** Launch profiles can be copied, and
+  field-level validation covers required project/profile data, blank arguments,
+  valid port ranges, and duplicate protocol/port pairs. / 启动配置支持复制；字段校验覆盖
+  项目与配置必填项、空参数、端口范围以及重复的协议/端口组合。
+- **Port details / 端口详情:** PID, executable path, and command line can be
+  copied directly, with explicit clipboard failure feedback. / PID、可执行文件路径和
+  命令行可直接复制，剪贴板失败时会明确提示。
+- **Log boundary / 日志边界:** Run-session metadata is retained for history,
+  but console logs remain in bounded memory and are not archived. Historical
+  sessions cannot reopen old logs after RunCove exits or the buffer is cleared.
+  / 运行会话元数据会保留用于历史记录，但控制台日志仍只存在于有界内存中，不会归档；
+  RunCove 退出或缓冲区清空后，历史会话无法重新打开旧日志。
+
 ## Download And Run
 
 1. Download the RunCove v0.2.0 Windows x64 portable zip from the [Releases page](https://github.com/AbyssWhalen/RunCove/releases).
@@ -29,7 +63,7 @@ The desktop app is the primary RunCove experience. Its compact `Overview`, `Port
 - Keep managed Windows process trees in Job Objects so stop and exit operations clean up child processes as well as their parent command.
 - Save the active launch order on explicit exit and restore it on demand, waiting for each profile's expected ports before starting the next one.
 - Use the Windows title-bar close button to choose between hiding to the system tray and safely quitting. The optional remembered choice can be reset from Help > Safety; the tray still exposes open, restore, stop-all, and confirmed exit actions.
-- Open the in-app Help and usage guide from the top-bar question-mark button. It explains the first-run workflow, ports, projects, permissions, and safety boundaries in English or Simplified Chinese, with links back to Ports and Projects.
+- Open the in-app Help and usage guide from the top-bar question-mark button. It explains the first-run workflow, ports, projects, run history, conflict recovery, permissions, and safety boundaries in English or Simplified Chinese, with links back to Ports and Projects.
 
 RunCove uses the shared status model `Idle`, `Starting`, `Running`, `Conflict`, `Exited`, and `Unknown`. Missing process metadata is reported as unavailable rather than triggering automatic elevation.
 

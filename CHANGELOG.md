@@ -2,6 +2,47 @@
 
 All notable user-facing changes to RunCove are documented in this file.
 
+## [Unreleased]
+
+These changes are planned for v0.2.1 and have not been published.
+
+### Added
+
+- A five-entry Recent Runs section on Overview and a searchable, filterable
+  history drawer for up to 200 stored run sessions. Deleted-project history is
+  retained, while profiles that still exist can be located in Projects.
+- Actionable expected-port conflict feedback. `View occupant` refreshes the
+  snapshot and focuses the exact TCP or UDP listener without automatically
+  terminating it; a listener that has disappeared is reported as changed.
+- Launch-profile copying with new identities and no copied runtime-observation
+  metadata.
+- Field-level project validation for required project and profile data, blank
+  arguments, valid port ranges, and duplicate protocol/port pairs, mirrored by
+  authoritative backend validation.
+- Copy actions for PID, executable path, and command line in port details, with
+  explicit clipboard failure feedback.
+- English and Simplified Chinese help for run history, conflict recovery,
+  restore failures, and the non-persistent log boundary.
+
+### Changed
+
+- Saved development-root scans now show scanning, candidates-found, empty, and
+  failure states with retry. Concurrent requests are coalesced, review
+  candidates survive closing the review window, and successful partial imports
+  remove only the imported candidates.
+- Lifecycle, restore, and discovery errors include the affected project,
+  profile, or port context when available.
+- Run history refreshes after relevant lifecycle actions and exit events rather
+  than on every two-second port poll. Unknown persisted statuses degrade safely
+  to `Unknown`.
+
+### Data And Safety Boundaries
+
+- No SQLite migration is introduced. Existing run-session metadata is reused;
+  polling snapshots and console logs are not persisted.
+- Conflict handling continues to require confirmation and process-identity
+  revalidation before an external process tree can be terminated.
+
 ## [0.2.0] - 2026-08-12
 
 RunCove replaces the original port-only application in this repository while

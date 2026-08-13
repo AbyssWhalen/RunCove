@@ -649,6 +649,7 @@ fn process_exit_status_event(
         status,
         pid: None,
         message,
+        related_port: None,
         unexpected,
         timestamp: now_ms(),
     }
@@ -673,6 +674,7 @@ fn emit_lifecycle_error<R: Runtime>(app: &AppHandle<R>, profile_id: &str, messag
             status: RunStatus::Unknown,
             pid: None,
             message: Some(message),
+            related_port: None,
             unexpected: true,
             timestamp: now_ms(),
         },
@@ -1045,6 +1047,7 @@ mod tests {
         assert_eq!(event.status, RunStatus::Exited);
         assert_eq!(event.pid, None);
         assert_eq!(event.message.as_deref(), Some("Process exited normally"));
+        assert_eq!(event.related_port, None);
         assert!(!event.unexpected);
     }
 

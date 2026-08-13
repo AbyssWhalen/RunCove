@@ -7,10 +7,12 @@ import type {
   RestoreResult,
   RunCoveApi,
   RunLogEvent,
+  RunSession,
   RunStatusEvent,
 } from "./types";
 
 const fixedNow = Date.parse("2026-08-07T08:30:00.000Z");
+const savedRootScanFailureKey = "runcove:e2e:saved-root-scan-failure-once";
 
 const initialSnapshot: DashboardSnapshot = {
   generatedAt: fixedNow,
@@ -184,6 +186,39 @@ const initialLogs: Record<string, RunLogEvent[]> = {
   ],
 };
 
+const initialRunHistory: RunSession[] = [
+  {
+    id: "session-web-current",
+    profileId: "profile-studio-web",
+    profileName: "Web",
+    pid: 18424,
+    startedAt: Date.parse("2026-08-07T08:12:24.000Z"),
+    endedAt: null,
+    exitCode: null,
+    status: "running",
+  },
+  {
+    id: "session-docs-exited",
+    profileId: "profile-docs",
+    profileName: "Astro",
+    pid: 17320,
+    startedAt: Date.parse("2026-08-06T16:40:00.000Z"),
+    endedAt: Date.parse("2026-08-06T16:41:12.000Z"),
+    exitCode: 0,
+    status: "exited",
+  },
+  {
+    id: "session-orphaned",
+    profileId: "deleted-profile",
+    profileName: "Removed service",
+    pid: 16004,
+    startedAt: Date.parse("2026-08-05T09:00:00.000Z"),
+    endedAt: Date.parse("2026-08-05T09:03:05.000Z"),
+    exitCode: null,
+    status: "interrupted",
+  },
+];
+
 function clone<T>(value: T): T {
   return structuredClone(value);
 }
@@ -228,7 +263,9 @@ export type MockRunCoveApi = RunCoveApi & { reset(): void };
 export function createMockApi(): MockRunCoveApi {
   let snapshot = clone(initialSnapshot);
   let logs = clone(initialLogs);
+  let runHistory = clone(initialRunHistory);
   const statusHandlers = new Set<(event: RunStatusEvent) => void>();
+  const statusEventListeners = new Set<EventListener>();
   const logHandlers = new Set<(event: RunLogEvent) => void>();
 
   const emitStatus = (profileId: string, status: RunStatusEvent["status"]): RunStatusEvent => {
@@ -263,8 +300,12 @@ export function createMockApi(): MockRunCoveApi {
     reset() {
       snapshot = clone(initialSnapshot);
       logs = clone(initialLogs);
+      runHistory = clone(initialRunHistory);
       mockSequence = 100;
       statusHandlers.clear();
+      statusEventListeners.forEach((listener) => window.removeEventListener("runcove:mock-run-status", listener));
+      statusEventListeners.clear();
+      delete document.documentElement.dataset.mockRunStatusReady;
       logHandlers.clear();
     },
     async getDashboardSnapshot() {
@@ -285,6 +326,10 @@ export function createMockApi(): MockRunCoveApi {
     async scanSavedDevelopmentRoot() {
       const root = snapshot.settings.recentDevelopmentRoot;
       if (!root) throw new Error("No development root has been saved yet");
+      if (sessionStorage.getItem(savedRootScanFailureKey) === "1") {
+        sessionStorage.removeItem(savedRootScanFailureKey);
+        throw new Error("Mock saved-root scan failed once");
+      }
       return [
         discoveredProject(`${root}\\signal-console`),
         discoveredProject(`${root}\\worker-lab`, "pnpm"),
@@ -385,7 +430,7 @@ export function createMockApi(): MockRunCoveApi {
       return clone(logs[profileId] ?? []);
     },
     async getRunHistory() {
-      return [];
+      return clone(runHistory).sort((left, right) => right.startedAt - left.startedAt).slice(0, 200);
     },
     async openPort() {},
     async openProjectDirectory() {},
@@ -407,7 +452,19 @@ export function createMockApi(): MockRunCoveApi {
     },
     async onRunStatus(handler) {
       statusHandlers.add(handler);
-      return () => statusHandlers.delete(handler);
+      document.documentElement.dataset.mockRunStatusReady = "true";
+      const listener = (event: Event) => {
+        const detail = (event as CustomEvent<RunStatusEvent>).detail;
+        if (detail) handler(clone(detail));
+      };
+      statusEventListeners.add(listener);
+      window.addEventListener("runcove:mock-run-status", listener);
+      return () => {
+        statusHandlers.delete(handler);
+        statusEventListeners.delete(listener);
+        window.removeEventListener("runcove:mock-run-status", listener);
+        if (statusHandlers.size === 0) delete document.documentElement.dataset.mockRunStatusReady;
+      };
     },
     async onRunLog(handler) {
       logHandlers.add(handler);

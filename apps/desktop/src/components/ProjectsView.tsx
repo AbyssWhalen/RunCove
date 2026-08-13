@@ -11,10 +11,11 @@ import {
   Square,
   Trash2,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { canOpenProfilePort } from "../profile-actions";
 import { useI18n } from "../i18n";
+import type { MessageKey } from "../i18n";
 import type { LaunchProfile, PortSnapshot, Project } from "../types";
 import { IconButton } from "./IconButton";
 import { StatusBadge } from "./StatusBadge";
@@ -26,6 +27,8 @@ interface ProjectsViewProps {
   monitorOnly: boolean;
   onImport: () => void;
   onAutoDiscover: () => void;
+  discoveryState?: "idle" | "scanning" | "candidates" | "empty" | "error";
+  discoveryError?: string | null;
   discoveredCount?: number;
   hasSavedDiscoveryRoot: boolean;
   onEdit: (project: Project) => void;
@@ -36,7 +39,17 @@ interface ProjectsViewProps {
   onOpenPort: (profile: LaunchProfile) => void;
   onOpenDirectory: (projectId: string) => void;
   onOpenLogs: (profile: LaunchProfile, project: Project) => void;
+  focusedProjectId?: string | null;
+  onFocusedProjectHandled?: () => void;
 }
+
+type VisibleDiscoveryState = "candidates" | "empty" | "error";
+
+const discoveryMessages: Record<VisibleDiscoveryState, MessageKey> = {
+  candidates: "projects.discovery.candidates",
+  empty: "projects.discovery.empty",
+  error: "projects.discovery.error",
+};
 
 export function ProjectsView({
   projects,
@@ -45,6 +58,8 @@ export function ProjectsView({
   monitorOnly,
   onImport,
   onAutoDiscover,
+  discoveryState = "idle",
+  discoveryError,
   discoveredCount = 0,
   hasSavedDiscoveryRoot,
   onEdit,
@@ -55,9 +70,13 @@ export function ProjectsView({
   onOpenPort,
   onOpenDirectory,
   onOpenLogs,
+  focusedProjectId,
+  onFocusedProjectHandled,
 }: ProjectsViewProps) {
   const { t } = useI18n();
   const [query, setQuery] = useState("");
+  const onFocusedProjectHandledRef = useRef(onFocusedProjectHandled);
+  onFocusedProjectHandledRef.current = onFocusedProjectHandled;
   const processActionLabel = (label: string) =>
     monitorOnly ? `${label}: ${t("privilege.monitorOnlyAction")}` : label;
   const filteredProjects = useMemo(() => {
@@ -70,6 +89,19 @@ export function ProjectsView({
         .includes(needle),
     );
   }, [projects, query]);
+
+  useEffect(() => {
+    if (!focusedProjectId) return;
+    const target = document.getElementById(`project-section-${focusedProjectId}`);
+    if (!target) {
+      onFocusedProjectHandledRef.current?.();
+      return;
+    }
+    target.scrollIntoView({ block: "center", behavior: "smooth" });
+    target.focus({ preventScroll: true });
+    const timer = window.setTimeout(() => onFocusedProjectHandledRef.current?.(), 2_400);
+    return () => window.clearTimeout(timer);
+  }, [focusedProjectId]);
 
   return (
     <div className="view-stack">
@@ -88,14 +120,34 @@ export function ProjectsView({
             <Plus size={16} />
             {t("projects.import")}
           </button>
-          <button className="button button--secondary" onClick={onAutoDiscover}>
-            <ScanSearch size={16} />
+          <button className="button button--secondary" onClick={onAutoDiscover} disabled={discoveryState === "scanning"}>
+            <ScanSearch size={16} className={discoveryState === "scanning" ? "is-spinning" : undefined} />
             {discoveredCount > 0
               ? t("projects.reviewDiscovered", { count: discoveredCount })
-              : t(hasSavedDiscoveryRoot ? "projects.rescanSavedRoot" : "projects.autoDiscover")}
+              : discoveryState === "scanning"
+                ? t("projects.scanning")
+                : t(hasSavedDiscoveryRoot ? "projects.rescanSavedRoot" : "projects.autoDiscover")}
           </button>
         </div>
       </div>
+
+      {discoveryState !== "idle" && discoveryState !== "scanning" && (
+        <div
+          className={`discovery-status discovery-status--${discoveryState}`}
+          role={discoveryState === "error" ? "alert" : "region"}
+          aria-live={discoveryState === "error" ? undefined : "polite"}
+        >
+          <div>
+            <strong>{t(discoveryMessages[discoveryState as VisibleDiscoveryState])}</strong>
+            {discoveryState === "error" && discoveryError && <span>{discoveryError}</span>}
+          </div>
+          {discoveryState === "error" && (
+            <button type="button" className="button button--secondary button--compact" onClick={onAutoDiscover}>
+              {t("action.retry")}
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="project-list">
         {filteredProjects.map((project) => {
@@ -106,7 +158,13 @@ export function ProjectsView({
             busyProfileIds.has(profile.id),
           );
           return (
-            <section className="project-section" key={project.id} aria-labelledby={`project-${project.id}`}>
+            <section
+              className={`project-section${focusedProjectId === project.id ? " project-section--focused" : ""}`}
+              id={`project-section-${project.id}`}
+              key={project.id}
+              aria-labelledby={`project-${project.id}`}
+              tabIndex={-1}
+            >
             <header className="project-header">
               <div className="project-identity">
                 <span className="project-monogram" aria-hidden="true">{project.name.slice(0, 1).toUpperCase()}</span>

@@ -6,6 +6,14 @@ import { api, resetMockApi } from "./api";
 import App from "./App";
 import type { DiscoveredProject } from "./types";
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
 function discoveredProject(name: string, path: string): DiscoveredProject {
   return {
     name,
@@ -117,5 +125,26 @@ describe("RunCove automatic project discovery", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       "No new service projects were found in your saved development root.",
     );
+  });
+
+  it("shows a saved-root failure and coalesces retry clicks", async () => {
+    const retry = deferred<DiscoveredProject[]>();
+    const scanSavedRoot = vi.spyOn(api, "scanSavedDevelopmentRoot")
+      .mockRejectedValueOnce(new Error("root is unavailable"))
+      .mockReturnValueOnce(retry.promise);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await waitFor(() => expect(scanSavedRoot).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Projects" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("root is unavailable");
+
+    const retryButton = screen.getByRole("button", { name: "Retry" });
+    await user.click(retryButton);
+    retryButton.click();
+    expect(scanSavedRoot).toHaveBeenCalledTimes(2);
+
+    retry.resolve([]);
+    expect(await screen.findByText("The saved development root is up to date.")).toBeVisible();
   });
 });

@@ -644,6 +644,39 @@ describe("RunCove desktop shell", () => {
     expect(within(stack as HTMLElement).getByRole("status")).toHaveTextContent("API started");
   });
 
+  it("does not reuse an old conflict action for a later unrelated error", async () => {
+    let emitRunStatus: ((event: RunStatusEvent) => void) | undefined;
+    let emitLifecycleError: ((message: string) => void) | undefined;
+    vi.spyOn(api, "onRunStatus").mockImplementation(async (handler) => {
+      emitRunStatus = handler;
+      return () => undefined;
+    });
+    vi.spyOn(api, "onLifecycleError").mockImplementation(async (handler) => {
+      emitLifecycleError = handler;
+      return () => undefined;
+    });
+    render(<App />);
+
+    await waitFor(() => {
+      expect(emitRunStatus).toBeTypeOf("function");
+      expect(emitLifecycleError).toBeTypeOf("function");
+    });
+    act(() => emitRunStatus?.({
+      profileId: "profile-studio-api",
+      status: "conflict",
+      pid: null,
+      message: "Expected port 5173 is occupied",
+      relatedPort: { port: 5173, protocol: "tcp" },
+      timestamp: Date.now(),
+    }));
+    expect(await screen.findByRole("button", { name: "View occupant" })).toBeInTheDocument();
+
+    act(() => emitLifecycleError?.("process watcher failed"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("process watcher failed");
+    expect(screen.queryByRole("button", { name: "View occupant" })).not.toBeInTheDocument();
+  });
+
   it.each([
     { status: "conflict" as const, unexpected: false, message: "Expected port 4010 is occupied" },
     { status: "exited" as const, unexpected: true, message: "Process exited with code 7" },

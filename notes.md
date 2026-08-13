@@ -1,5 +1,70 @@
 # RunCove Implementation Notes
 
+## v0.2.1 Local Completion (2026-08-13)
+
+- Implemented the approved `V0.2.1_PLAN.md` from `main` commit `bf3d532`
+  without changing CI/release workflows, Git history, tags, or remote state.
+  The work remains uncommitted and unpublished.
+- Overview now shows the five newest managed run sessions, with a searchable
+  and filterable drawer capped at 200 records. Orphaned history remains
+  readable, known projects can be located, and future unknown stored statuses
+  degrade to `Unknown`.
+- Structured port conflicts carry an optional port/protocol through start,
+  status events, and restore results. `View occupant` rechecks the snapshot and
+  focuses only the exact protocol row; stale occupancy and stale error-action
+  context are explicitly cleared.
+- Saved-root discovery exposes scanning, candidates, empty, and error states,
+  coalesces concurrent scans, preserves candidates while review is closed, and
+  supports retry. Imports and starts always remain user-confirmed.
+- Project editing can duplicate a launch profile without persistent IDs or
+  observed-runtime state. Frontend and backend validation cover required
+  fields, blank arguments, working directories, port range, and duplicate
+  port/protocol pairs while retaining PATH-resolved programs such as
+  `npm.cmd`.
+- Port details can copy PID, executable path, and command line with explicit
+  failure feedback. Help and all new controls have English and Simplified
+  Chinese coverage, keyboard semantics, and accessible labels.
+- No SQLite schema migration was added. Existing `run_sessions` data is reused;
+  polling snapshots and console logs remain non-persistent.
+
+### Fresh Verification
+
+- Root Rust: format passed; Clippy passed with warnings denied; all targets
+  passed `38/38` tests.
+- Desktop Rust: format passed; Clippy passed with warnings denied; all targets
+  passed `109` tests with the one explicitly configured live-service test
+  ignored by default.
+- Frontend: ESLint, TypeScript, and production Vite build passed. Vitest passed
+  `114/114` tests across 20 files after the final audit fixes, including
+  polling-safe port/project focus timers and partial-import candidate cleanup.
+- Microsoft Edge Playwright passed `6/6`: the complete primary workflow at
+  `900x600`, `1280x720`, and `1440x900`, plus profile copy/validation, exact
+  conflict navigation, and saved-root failure/retry. All three viewports cover
+  English and Simplified Chinese run history and Help with no captured console
+  warnings/errors or horizontal overflow.
+- `npm run tauri build` produced
+  `apps/desktop/src-tauri/target/release/runcove-desktop.exe` as RunCove
+  `0.2.1`. Size: `25,418,344` bytes. SHA-256:
+  `4B00DD7F72B6AAD29646684DB7F852D691C7183A4BF78DA703C06556A9BA3A78`.
+  The executable is unsigned and was built but not launched, installed,
+  packaged, or published.
+- Root and desktop Cargo metadata, npm metadata, Tauri metadata, and embedded
+  executable file/product versions all report `0.2.1`. `git diff --check`
+  passed.
+
+### Residual Boundaries
+
+- The desktop app remains Windows-first; only the port-inspection CLI is
+  cross-platform in this version.
+- RunCove cannot guarantee metadata for every protected kernel/system process,
+  even after an explicit UAC relaunch. Administrator mode remains monitor-only.
+- Historical session metadata does not include archived console logs. The one
+  environment-driven live-services acceptance test still requires explicit
+  fixture configuration and remains ignored in the normal suite.
+- The local release executable has no code signature. No installer, startup
+  automation, Docker/remote management, `.env` editing, or persistent log
+  archive was added.
+
 ## Approved Product Decisions
 
 - Windows 11 is the first desktop target; the scanning core and CLI retain their
