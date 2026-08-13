@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { I18nProvider } from "../i18n";
-import type { DiscoveredProject } from "../types";
+import type { DiscoveredProject, Project } from "../types";
 import { ProjectModal } from "./ProjectModal";
 
 function deferred<T>() {
@@ -56,6 +56,137 @@ function renderModal(
 }
 
 describe("ProjectModal safe discovery imports", () => {
+  it("copies a profile without persisted IDs or observed-runtime metadata", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const storedProject: Project = {
+      id: "project-persisted",
+      name: safeProject.name,
+      path: safeProject.path,
+      createdAt: 1,
+      updatedAt: 2,
+      profiles: [{
+        id: "profile-persisted",
+        projectId: "project-persisted",
+        name: "dev",
+        program: "npm.cmd",
+        args: ["run", "dev"],
+        cwd: safeProject.path,
+        status: "idle",
+        expectedPorts: [{
+          id: "port-persisted",
+          profileId: "profile-persisted",
+          port: 3100,
+          protocol: "tcp",
+        }],
+      }],
+    };
+    renderModal({
+      project: storedProject,
+      onSave,
+    });
+
+    await user.click(screen.getByRole("button", { name: "Copy profile 1" }));
+
+    expect(screen.getByText("Profile 2")).toBeInTheDocument();
+    expect(screen.getAllByDisplayValue("npm.cmd")).toHaveLength(2);
+    expect(screen.getAllByDisplayValue("D:\\projects\\web-app")).toHaveLength(3);
+    expect(screen.getAllByDisplayValue("run")).toHaveLength(2);
+    expect(screen.getAllByDisplayValue("3100")).toHaveLength(2);
+
+    await user.click(screen.getByRole("button", { name: "Save project" }));
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    const saved = onSave.mock.calls[0][0];
+    expect(saved.profiles[1]).toEqual({
+      name: "dev Copy",
+      program: "npm.cmd",
+      args: ["run", "dev"],
+      cwd: "D:\\projects\\web-app",
+      expectedPorts: [{ port: 3100, protocol: "tcp" }],
+    });
+    expect(saved.profiles[1]).not.toHaveProperty("id");
+    expect(saved.profiles[1]).not.toHaveProperty("observedRuntime");
+    expect(saved.profiles[1].expectedPorts[0]).not.toHaveProperty("id");
+  });
+
+  it("marks invalid fields and duplicate ports when an invalid form is submitted", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    renderModal({
+      onDiscover: vi.fn().mockResolvedValue(safeProject),
+      onSave,
+    });
+
+    await user.type(screen.getByLabelText("Project directory"), safeProject.path);
+    await user.click(screen.getByRole("button", { name: "Inspect directory" }));
+
+    await screen.findByDisplayValue("Web App");
+    const name = screen.getByLabelText("Project name");
+    await user.clear(name);
+    await user.clear(screen.getByLabelText("Name"));
+    await user.clear(screen.getByLabelText("Program"));
+    await user.clear(screen.getByLabelText("Working directory"));
+    await user.click(screen.getByRole("button", { name: "Add argument" }));
+    await user.click(screen.getByRole("button", { name: "Add expected port" }));
+    await user.click(screen.getByRole("button", { name: "Add expected port" }));
+    await user.click(screen.getByRole("button", { name: "Save project" }));
+
+    expect(name).toHaveAttribute("aria-invalid", "true");
+    expect(name).toHaveAttribute("aria-describedby", "project-name-error");
+    expect(screen.getByLabelText("Profile 1 argument 3")).toHaveAttribute("aria-invalid", "true");
+    const duplicatePorts = screen.getAllByDisplayValue("3000");
+    expect(duplicatePorts).toHaveLength(2);
+    expect(duplicatePorts[0]).toHaveAttribute("aria-invalid", "true");
+    expect(duplicatePorts[1]).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getAllByText("This port and protocol pair is already listed in this profile.")).toHaveLength(2);
+    expect(screen.getAllByRole("alert").some((alert) =>
+      alert.textContent?.includes("Review the highlighted fields before saving."),
+    )).toBe(true);
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("localizes profile copying and field-level validation in Chinese", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const storedProject: Project = {
+      id: "project-zh",
+      name: safeProject.name,
+      path: safeProject.path,
+      createdAt: 1,
+      updatedAt: 2,
+      profiles: [{
+        id: "profile-zh",
+        projectId: "project-zh",
+        name: "dev",
+        program: "npm.cmd",
+        args: ["run", "dev"],
+        cwd: safeProject.path,
+        status: "idle",
+        expectedPorts: [],
+      }],
+    };
+    renderModal({ project: storedProject, onSave }, "zh-CN");
+
+    await user.click(screen.getByRole("button", { name: "复制配置 1" }));
+    expect(screen.getByDisplayValue("dev 副本")).toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText("项目名称"));
+    await user.clear(screen.getAllByLabelText("名称")[0]);
+    await user.clear(screen.getAllByLabelText("程序")[0]);
+    await user.clear(screen.getAllByLabelText("工作目录")[0]);
+    await user.click(screen.getAllByRole("button", { name: "添加参数" })[0]);
+    await user.click(screen.getAllByRole("button", { name: "添加预期端口" })[0]);
+    await user.click(screen.getAllByRole("button", { name: "添加预期端口" })[0]);
+    await user.click(screen.getByRole("button", { name: "保存项目" }));
+
+    expect(screen.getAllByText("此字段为必填项。")).toHaveLength(4);
+    expect(screen.getByText("参数不能为空；如果不需要，请移除此参数。")).toBeVisible();
+    expect(screen.getAllByText("此配置中已经存在相同的端口和协议。")).toHaveLength(2);
+    expect(screen.getByText("请检查标出的字段后再保存。")).toBeVisible();
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
   it("marks runtime-observed launch details for review", async () => {
     const user = userEvent.setup();
     const observedProject: DiscoveredProject = {
@@ -115,6 +246,47 @@ describe("ProjectModal safe discovery imports", () => {
     expect(onSaveMany).toHaveBeenCalledWith([
       expect.objectContaining({ name: "Web App", profiles: [expect.objectContaining({ name: "dev" })] }),
     ]);
+  });
+
+  it("removes successfully imported candidates while keeping the failed candidate selected", () => {
+    const workerProject: DiscoveredProject = {
+      ...safeProject,
+      name: "Worker Lab",
+      path: "D:\\projects\\worker-lab",
+      profiles: [{
+        ...safeProject.profiles[0],
+        name: "start",
+        cwd: "D:\\projects\\worker-lab",
+      }],
+    };
+    const baseProps: React.ComponentProps<typeof ProjectModal> = {
+      initialImportMode: "root",
+      initialRoot: "D:\\projects",
+      initialRootProjects: [safeProject, workerProject],
+      onDiscover: vi.fn(),
+      onScanDevelopmentRoot: vi.fn(),
+      onPickDirectory: vi.fn().mockResolvedValue(null),
+      onSave: vi.fn(),
+      onSaveMany: vi.fn(),
+      registeredPaths: [],
+      onClose: vi.fn(),
+    };
+    const view = render(
+      <I18nProvider><ProjectModal {...baseProps} /></I18nProvider>,
+    );
+
+    expect(screen.getByRole("checkbox", { name: "Select Web App" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Select Worker Lab" })).toBeChecked();
+
+    view.rerender(
+      <I18nProvider>
+        <ProjectModal {...baseProps} initialRootProjects={[workerProject]} />
+      </I18nProvider>,
+    );
+
+    expect(screen.queryByText("Web App", { exact: true })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select Worker Lab" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Import 1 project" })).toBeEnabled();
   });
 
   it("localizes an unavailable package manager", async () => {

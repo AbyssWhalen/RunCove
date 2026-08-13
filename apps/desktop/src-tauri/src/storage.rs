@@ -4,6 +4,7 @@ use crate::models::{
     ProjectInput, RestoreSet, RunSession, RunStatus,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Mutex;
 use uuid::Uuid;
@@ -43,6 +44,7 @@ impl Storage {
         if input.name.trim().is_empty() {
             return Err(invalid("Project name cannot be empty"));
         }
+        validate_project(&input)?;
 
         let now = now_ms();
         let project_id = input.id.unwrap_or_else(new_id);
@@ -65,7 +67,6 @@ impl Storage {
         let existing_ids = profile_ids_for(&transaction, &project_id)?;
         let mut retained_ids = Vec::new();
         for (sort_order, profile) in input.profiles.into_iter().enumerate() {
-            validate_profile(&profile.program, &profile.cwd)?;
             let profile_id = profile.id.unwrap_or_else(new_id);
             let owner: Option<String> = transaction
                 .query_row(
@@ -341,7 +342,7 @@ impl Storage {
         let connection = self.connection.lock().expect("database mutex poisoned");
         let mut statement = connection.prepare(
             "SELECT id, profile_id, profile_name, pid, started_at, ended_at, exit_code, status
-             FROM run_sessions ORDER BY started_at DESC LIMIT ?1",
+             FROM run_sessions ORDER BY started_at DESC, rowid DESC LIMIT ?1",
         )?;
         let rows = statement.query_map([limit as i64], |row| {
             Ok(RunSession {
@@ -544,12 +545,44 @@ fn association_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PortAssocia
     })
 }
 
-fn validate_profile(program: &str, cwd: &str) -> AppResult<()> {
-    if program.trim().is_empty() {
+fn validate_project(input: &ProjectInput) -> AppResult<()> {
+    if input.profiles.is_empty() {
+        return Err(invalid("Project must have at least one launch profile"));
+    }
+    for profile in &input.profiles {
+        validate_profile(profile)?;
+    }
+    Ok(())
+}
+
+fn validate_profile(profile: &crate::models::LaunchProfileInput) -> AppResult<()> {
+    if profile.name.trim().is_empty() {
+        return Err(invalid("Launch profile name cannot be empty"));
+    }
+    if profile.program.trim().is_empty() {
         return Err(invalid("Launch program cannot be empty"));
     }
-    if !Path::new(cwd).is_dir() {
+    if profile
+        .args
+        .iter()
+        .any(|argument| argument.trim().is_empty())
+    {
+        return Err(invalid("Launch arguments cannot contain empty items"));
+    }
+    if !Path::new(&profile.cwd).is_dir() {
         return Err(invalid("Launch working directory does not exist"));
+    }
+    let mut expected_ports = HashSet::new();
+    for expected in &profile.expected_ports {
+        if expected.port == 0 {
+            return Err(invalid("Expected port must be between 1 and 65535"));
+        }
+        let protocol = normalize_protocol(&expected.protocol)?;
+        if !expected_ports.insert((expected.port, protocol)) {
+            return Err(invalid(
+                "Expected ports cannot contain duplicate protocol and port pairs",
+            ));
+        }
     }
     Ok(())
 }
@@ -760,6 +793,79 @@ mod tests {
     }
 
     #[test]
+    fn project_requires_a_valid_launch_profile_before_writing() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = Storage::in_memory().unwrap();
+        let mut project = sample_project(temp.path());
+        project.profiles.clear();
+        assert_eq!(
+            storage.save_project(project).unwrap_err().to_string(),
+            "Project must have at least one launch profile"
+        );
+        assert!(storage.list_projects().unwrap().is_empty());
+
+        let invalid_profiles = [
+            ("name", "Launch profile name cannot be empty"),
+            ("program", "Launch program cannot be empty"),
+            ("argument", "Launch arguments cannot contain empty items"),
+            (
+                "duplicate-port",
+                "Expected ports cannot contain duplicate protocol and port pairs",
+            ),
+        ];
+        for (invalid_field, expected) in invalid_profiles {
+            let mut project = sample_project(temp.path());
+            match invalid_field {
+                "name" => project.profiles[0].name = "   ".into(),
+                "program" => project.profiles[0].program = "  ".into(),
+                "argument" => project.profiles[0].args.push("\t".into()),
+                "duplicate-port" => {
+                    project.profiles[0].expected_ports.push(ExpectedPortInput {
+                        id: None,
+                        port: 5173,
+                        protocol: "TCP".into(),
+                    });
+                }
+                _ => unreachable!(),
+            }
+            assert_eq!(
+                storage.save_project(project).unwrap_err().to_string(),
+                expected
+            );
+            assert!(storage.list_projects().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn project_validation_allows_programs_resolved_through_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = Storage::in_memory().unwrap();
+
+        let project = storage.save_project(sample_project(temp.path())).unwrap();
+
+        assert_eq!(project.profiles[0].program, "npm");
+    }
+
+    #[test]
+    fn project_validation_rejects_missing_working_directory_and_zero_port() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = Storage::in_memory().unwrap();
+        let mut missing_cwd = sample_project(temp.path());
+        missing_cwd.profiles[0].cwd = temp.path().join("missing").display().to_string();
+        assert_eq!(
+            storage.save_project(missing_cwd).unwrap_err().to_string(),
+            "Launch working directory does not exist"
+        );
+
+        let mut zero_port = sample_project(temp.path());
+        zero_port.profiles[0].expected_ports[0].port = 0;
+        assert_eq!(
+            storage.save_project(zero_port).unwrap_err().to_string(),
+            "Expected port must be between 1 and 65535"
+        );
+    }
+
+    #[test]
     fn restore_set_preserves_launch_order() {
         let temp = tempfile::tempdir().unwrap();
         let storage = Storage::in_memory().unwrap();
@@ -777,15 +883,80 @@ mod tests {
         let path = temp.path().join("runcove.db");
         let storage = Storage::open(&path).unwrap();
         let project = storage.save_project(sample_project(temp.path())).unwrap();
-        storage
+        let starting = storage
             .begin_session(&project.profiles[0].id, &project.profiles[0].name)
             .unwrap();
+        let running = storage
+            .begin_session(&project.profiles[0].id, &project.profiles[0].name)
+            .unwrap();
+        storage.set_session_pid(&running, 123).unwrap();
+        let exited = storage
+            .begin_session(&project.profiles[0].id, &project.profiles[0].name)
+            .unwrap();
+        storage.finish_session(&exited, Some(0)).unwrap();
         drop(storage);
 
         let reopened = Storage::open(&path).unwrap();
         let sessions = reopened.list_sessions(10).unwrap();
-        assert_eq!(sessions[0].status, "interrupted");
-        assert!(sessions[0].ended_at.is_some());
+        let by_id = sessions
+            .into_iter()
+            .map(|session| (session.id.clone(), session))
+            .collect::<std::collections::HashMap<_, _>>();
+
+        for session_id in [starting, running] {
+            let session = &by_id[&session_id];
+            assert_eq!(session.status, "interrupted");
+            assert!(session.ended_at.is_some());
+            assert_eq!(session.exit_code, None);
+        }
+        let completed = &by_id[&exited];
+        assert_eq!(completed.status, "exited");
+        assert!(completed.ended_at.is_some());
+        assert_eq!(completed.exit_code, Some(0));
+    }
+
+    #[test]
+    fn run_history_is_newest_first_and_honors_the_limit() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = Storage::in_memory().unwrap();
+        let project = storage.save_project(sample_project(temp.path())).unwrap();
+        let profile = &project.profiles[0];
+        let first = storage.begin_session(&profile.id, &profile.name).unwrap();
+        let second = storage.begin_session(&profile.id, &profile.name).unwrap();
+        {
+            let connection = storage.connection.lock().unwrap();
+            connection
+                .execute(
+                    "UPDATE run_sessions SET started_at=10 WHERE id=?1",
+                    [&first],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "UPDATE run_sessions SET started_at=20 WHERE id=?1",
+                    [&second],
+                )
+                .unwrap();
+        }
+
+        let sessions = storage.list_sessions(1).unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, second);
+
+        let connection = storage.connection.lock().unwrap();
+        connection
+            .execute("UPDATE run_sessions SET started_at=30", [])
+            .unwrap();
+        drop(connection);
+        let tied_sessions = storage.list_sessions(2).unwrap();
+        assert_eq!(
+            tied_sessions
+                .iter()
+                .map(|session| session.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![second.as_str(), first.as_str()]
+        );
     }
 
     #[test]
@@ -797,12 +968,20 @@ mod tests {
         let session = storage.begin_session(&profile.id, &profile.name).unwrap();
         storage.set_session_pid(&session, 123).unwrap();
         storage.finish_session(&session, Some(0)).unwrap();
+        let retained_profile = LaunchProfileInput {
+            id: None,
+            name: "preview".into(),
+            program: "npm".into(),
+            args: vec!["run".into(), "preview".into()],
+            cwd: temp.path().to_string_lossy().into_owned(),
+            expected_ports: Vec::new(),
+        };
         storage
             .save_project(ProjectInput {
                 id: Some(project.id),
                 name: "Sample".into(),
                 path: temp.path().to_string_lossy().into_owned(),
-                profiles: Vec::new(),
+                profiles: vec![retained_profile],
             })
             .unwrap();
 
@@ -810,6 +989,24 @@ mod tests {
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].profile_id, None);
         assert_eq!(sessions[0].profile_name, "dev");
+    }
+
+    #[test]
+    fn deleting_project_preserves_orphaned_session_history() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = Storage::in_memory().unwrap();
+        let project = storage.save_project(sample_project(temp.path())).unwrap();
+        let profile = &project.profiles[0];
+        let session = storage.begin_session(&profile.id, &profile.name).unwrap();
+        storage.finish_session(&session, Some(7)).unwrap();
+
+        storage.delete_project(&project.id).unwrap();
+
+        let sessions = storage.list_sessions(10).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].profile_id, None);
+        assert_eq!(sessions[0].profile_name, "dev");
+        assert_eq!(sessions[0].exit_code, Some(7));
     }
 
     #[test]

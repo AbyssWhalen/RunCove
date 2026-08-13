@@ -20,6 +20,8 @@ import { OverviewView } from "./components/OverviewView";
 import { PortsView } from "./components/PortsView";
 import { ProjectModal } from "./components/ProjectModal";
 import { ProjectsView } from "./components/ProjectsView";
+import { RunHistoryDrawer } from "./components/RunHistoryDrawer";
+import type { RunHistoryLabels } from "./components/RunHistorySection";
 import { I18nProvider, LANGUAGE_STORAGE_KEY, useI18n } from "./i18n";
 import type { LanguagePreference, MessageKey } from "./i18n";
 import { isLanguagePreference } from "./i18n/context";
@@ -33,11 +35,14 @@ import type {
   ProfileStatus,
   Project,
   ProjectInput,
+  RunSession,
   RunStatusEvent,
 } from "./types";
 
 type ActiveView = "overview" | "ports" | "projects";
 type ProjectModalState = Project | "import" | null;
+type DiscoveryState = "idle" | "scanning" | "candidates" | "empty" | "error";
+type PortFocus = { port: number; protocol: PortSnapshot["protocol"]; nonce: number };
 
 function normalizedProjectPath(path: string): string {
   return path.replace(/[\\/]+$/, "").toLowerCase();
@@ -91,6 +96,10 @@ function AppShell() {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [runHistory, setRunHistory] = useState<RunSession[]>([]);
+  const [runHistoryLoading, setRunHistoryLoading] = useState(false);
+  const [runHistoryError, setRunHistoryError] = useState<string | null>(null);
+  const [runHistoryDrawerOpen, setRunHistoryDrawerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busyProfileIds, setBusyProfileIds] = useState<Set<string>>(new Set());
@@ -99,7 +108,12 @@ function AppShell() {
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   const [projectDeleteBusy, setProjectDeleteBusy] = useState(false);
   const [discoverySuggestions, setDiscoverySuggestions] = useState<DiscoveredProject[] | null>(null);
+  const [discoveryState, setDiscoveryState] = useState<DiscoveryState>("idle");
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
   const [autoDiscoveryMode, setAutoDiscoveryMode] = useState(false);
+  const [portFocus, setPortFocus] = useState<PortFocus | null>(null);
+  const [errorRelatedPort, setErrorRelatedPort] = useState<PortFocus | null>(null);
+  const [focusedProjectId, setFocusedProjectId] = useState<string | null>(null);
   const [logSelection, setLogSelection] = useState<{ profileId: string; projectId: string } | null>(null);
   const [externalProcess, setExternalProcess] = useState<PortSnapshot | null>(null);
   const [terminateBusy, setTerminateBusy] = useState(false);
@@ -123,6 +137,34 @@ function AppShell() {
   const closeChoiceActionInFlight = useRef(false);
   const profileStatusEvents = useRef(new Map<string, RunStatusEvent>());
   const autoDiscoveryChecked = useRef(false);
+  const discoveryInFlight = useRef(false);
+  const runHistoryLoaded = useRef(false);
+  const runHistoryRequest = useRef(0);
+
+  const showError = useCallback((message: string | null, relatedPort?: Omit<PortFocus, "nonce"> | null) => {
+    setError(message);
+    setErrorRelatedPort(message && relatedPort
+      ? { ...relatedPort, nonce: Date.now() }
+      : null);
+  }, []);
+
+  const loadRunHistory = useCallback(async () => {
+    const request = ++runHistoryRequest.current;
+    setRunHistoryLoading(true);
+    try {
+      const next = await api.getRunHistory();
+      if (request !== runHistoryRequest.current) return;
+      setRunHistory(next.slice(0, 200));
+      setRunHistoryError(null);
+      runHistoryLoaded.current = true;
+    } catch (reason) {
+      if (request === runHistoryRequest.current) {
+        setRunHistoryError(t("history.loadError", { detail: errorMessage(reason) }));
+      }
+    } finally {
+      if (request === runHistoryRequest.current) setRunHistoryLoading(false);
+    }
+  }, [t]);
 
   const loadSnapshot = useCallback(async (quiet = false) => {
     const request = ++snapshotRequest.current;
@@ -135,10 +177,10 @@ function AppShell() {
       for (const [profileId, event] of profileStatusEvents.current) {
         if (event.timestamp <= next.generatedAt) profileStatusEvents.current.delete(profileId);
       }
-      setError(null);
+      showError(null);
     } catch (reason) {
       if (request === snapshotRequest.current) {
-        setError(t("error.operationFailed", { detail: errorMessage(reason) }));
+        showError(t("error.operationFailed", { detail: errorMessage(reason) }));
       }
     } finally {
       if (request === snapshotRequest.current) {
@@ -146,13 +188,18 @@ function AppShell() {
         setRefreshing(false);
       }
     }
-  }, [t]);
+  }, [showError, t]);
 
   useEffect(() => {
     void loadSnapshot();
   }, [loadSnapshot]);
 
+  useEffect(() => {
+    if (activeView === "overview" && !runHistoryLoaded.current) void loadRunHistory();
+  }, [activeView, loadRunHistory]);
+
   const discoverKnownRoots = useCallback(async (interactive = false) => {
+    if (discoveryInFlight.current) return;
     if (!snapshot?.settings.recentDevelopmentRoot) {
       if (interactive) {
         setAutoDiscoveryMode(true);
@@ -162,6 +209,9 @@ function AppShell() {
       }
       return;
     }
+    discoveryInFlight.current = true;
+    setDiscoveryState("scanning");
+    setDiscoveryError(null);
     const registered = new Set((snapshot?.projects ?? []).map((project) => normalizedProjectPath(project.path)));
     try {
       const suggestions = (await api.scanSavedDevelopmentRoot())
@@ -169,19 +219,27 @@ function AppShell() {
       if (suggestions.length > 0) {
         setAutoDiscoveryMode(true);
         setDiscoverySuggestions(suggestions);
+        setDiscoveryState("candidates");
         if (interactive) {
           setProjectModal("import");
           setActiveView("projects");
         } else {
           setNotice(t("projects.autoDiscoveryFound", { count: suggestions.length }));
         }
-      } else if (interactive) {
-        setNotice(t("projects.autoDiscoveryEmpty"));
+      } else {
+        setDiscoverySuggestions([]);
+        setDiscoveryState("empty");
+        if (interactive) setNotice(t("projects.autoDiscoveryEmpty"));
       }
-    } catch {
-      if (interactive) setError(t("projects.autoDiscoveryError"));
+    } catch (reason) {
+      const detail = errorMessage(reason);
+      setDiscoveryState("error");
+      setDiscoveryError(detail);
+      if (interactive) showError(t("projects.autoDiscoveryErrorDetail", { detail }));
+    } finally {
+      discoveryInFlight.current = false;
     }
-  }, [snapshot?.projects, snapshot?.settings.recentDevelopmentRoot, t]);
+  }, [showError, snapshot?.projects, snapshot?.settings.recentDevelopmentRoot, t]);
 
   useEffect(() => {
     if (!snapshot?.settings.recentDevelopmentRoot || autoDiscoveryChecked.current) return;
@@ -199,43 +257,44 @@ function AppShell() {
       setSnapshot((current) => current ? replaceProfileStatus(current, event) : current);
       if (event.message) {
         if (event.status === "conflict" || event.status === "unknown" || event.unexpected) {
-          setError(t("error.lifecycleDetail", { detail: event.message }));
+          showError(t("error.lifecycleDetail", { detail: event.message }), event.relatedPort);
         } else {
           setNotice(event.message);
         }
       }
+      if (event.status === "exited" || event.unexpected) void loadRunHistory();
     }).then((dispose) => {
       if (cancelled) dispose();
       else unlisten = dispose;
     }).catch((reason) => {
       if (!cancelled) {
-        setError(t("error.operationFailed", { detail: errorMessage(reason) }));
+        showError(t("error.operationFailed", { detail: errorMessage(reason) }));
       }
     });
     return () => {
       cancelled = true;
       unlisten?.();
     };
-  }, [t]);
+  }, [loadRunHistory, showError, t]);
 
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     void api.onLifecycleError((message) => {
-      setError(t("error.lifecycleDetail", { detail: message }));
+      showError(t("error.lifecycleDetail", { detail: message }));
     }).then((dispose) => {
       if (cancelled) dispose();
       else unlisten = dispose;
     }).catch((reason) => {
       if (!cancelled) {
-        setError(t("error.operationFailed", { detail: errorMessage(reason) }));
+        showError(t("error.operationFailed", { detail: errorMessage(reason) }));
       }
     });
     return () => {
       cancelled = true;
       unlisten?.();
     };
-  }, [t]);
+  }, [showError, t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -253,13 +312,13 @@ function AppShell() {
       if (cancelled) dispose();
       else unlisten = dispose;
     }).catch((reason) => {
-      if (!cancelled) setError(errorMessage(reason));
+      if (!cancelled) showError(errorMessage(reason));
     });
     return () => {
       cancelled = true;
       unlisten?.();
     };
-  }, []);
+  }, [showError]);
 
   useEffect(() => {
     if (!snapshot || languageSynced.current) return;
@@ -279,9 +338,9 @@ function AppShell() {
     if (localPreference === null) {
       setPreference(backendPreference);
     } else if (backendPreference !== localPreference) {
-      void api.setLanguagePreference(localPreference).catch((reason) => setError(errorMessage(reason)));
+      void api.setLanguagePreference(localPreference).catch((reason) => showError(errorMessage(reason)));
     }
-  }, [preference, setPreference, snapshot]);
+  }, [preference, setPreference, showError, snapshot]);
 
   useEffect(() => {
     if (!notice) return;
@@ -297,13 +356,24 @@ function AppShell() {
     if (restoreInFlight.current || profileActionsInFlight.current.has(profileId)) return;
     profileActionsInFlight.current.add(profileId);
     setBusyProfileIds((current) => new Set(current).add(profileId));
+    const previousStatusEvent = profileStatusEvents.current.get(profileId);
+    const entry = snapshot?.projects.flatMap((project) =>
+      project.profiles.map((profile) => ({ project, profile })),
+    ).find(({ profile }) => profile.id === profileId);
     try {
       const event = await action(profileId);
       setSnapshot((current) => current ? replaceProfileStatus(current, event) : current);
       setNotice(t(completedMessage));
       await loadSnapshot(true);
+      await loadRunHistory();
     } catch (reason) {
-      setError(errorMessage(reason));
+      const failureEvent = profileStatusEvents.current.get(profileId);
+      showError(t("error.profileActionFailed", {
+        profile: entry ? `${entry.project.name} / ${entry.profile.name}` : profileId,
+        detail: errorMessage(reason),
+      }), failureEvent !== previousStatusEvent && failureEvent?.status === "conflict"
+        ? failureEvent.relatedPort
+        : null);
     } finally {
       profileActionsInFlight.current.delete(profileId);
       setBusyProfileIds((current) => {
@@ -321,22 +391,23 @@ function AppShell() {
     try {
       const result = await api.restoreLastRunSet();
       await loadSnapshot(true);
+      await loadRunHistory();
       if (result.error) {
-        setError(t("error.restorePartial", {
+        showError(t("error.restorePartial", {
           count: result.startedProfileIds.length,
           profile: result.failedProfileId ?? "-",
           detail: result.error,
-        }));
+        }), result.relatedPort);
       } else {
         setNotice(t("notice.restored", { count: result.startedProfileIds.length }));
       }
     } catch (reason) {
-      setError(errorMessage(reason));
+      showError(errorMessage(reason));
     } finally {
       restoreInFlight.current = false;
       setRestoreBusy(false);
     }
-  }, [loadSnapshot, t]);
+  }, [loadRunHistory, loadSnapshot, showError, t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -345,7 +416,7 @@ function AppShell() {
       if (cancelled) dispose();
       else unlisteners.push(dispose);
     }).catch((reason) => {
-      if (!cancelled) setError(errorMessage(reason));
+      if (!cancelled) showError(errorMessage(reason));
     });
     void api.onTrayQuitRequested(() => {
       if (shutdownInFlight.current) return;
@@ -354,7 +425,7 @@ function AppShell() {
       if (cancelled) dispose();
       else unlisteners.push(dispose);
     }).catch((reason) => {
-      if (!cancelled) setError(errorMessage(reason));
+      if (!cancelled) showError(errorMessage(reason));
     });
     void api.onWindowCloseChoiceRequested(() => {
       if (shutdownInFlight.current || closeChoiceRequested.current) return;
@@ -365,13 +436,13 @@ function AppShell() {
       if (cancelled) dispose();
       else unlisteners.push(dispose);
     }).catch((reason) => {
-      if (!cancelled) setError(errorMessage(reason));
+      if (!cancelled) showError(errorMessage(reason));
     });
     return () => {
       cancelled = true;
       unlisteners.forEach((dispose) => dispose());
     };
-  }, [restoreLastRunSet]);
+  }, [restoreLastRunSet, showError]);
 
   const saveProject = async (input: ProjectInput) => {
     await api.saveProject(input);
@@ -386,6 +457,9 @@ function AppShell() {
       for (const input of inputs) {
         await api.saveProject(input);
         imported += 1;
+        setDiscoverySuggestions((current) => current?.filter(
+          (candidate) => normalizedProjectPath(candidate.path) !== normalizedProjectPath(input.path),
+        ) ?? current);
       }
     } catch (reason) {
       await loadSnapshot(true);
@@ -398,7 +472,13 @@ function AppShell() {
     }
     await loadSnapshot(true);
     setProjectModal(null);
-    setDiscoverySuggestions(null);
+    setDiscoverySuggestions((current) => {
+      const next = current?.filter((candidate) =>
+        !inputs.some((input) => normalizedProjectPath(input.path) === normalizedProjectPath(candidate.path)),
+      ) ?? null;
+      setDiscoveryState(next && next.length > 0 ? "candidates" : "empty");
+      return next;
+    });
     setAutoDiscoveryMode(false);
     setNotice(t("notice.projectsImported", { count: inputs.length }));
   };
@@ -418,7 +498,7 @@ function AppShell() {
       await deleteProject(projectToDelete.id);
       setProjectToDelete(null);
     } catch (reason) {
-      setError(t("error.operationFailed", { detail: errorMessage(reason) }));
+      showError(t("error.operationFailed", { detail: errorMessage(reason) }));
     } finally {
       projectDeleteInFlight.current = false;
       setProjectDeleteBusy(false);
@@ -431,7 +511,7 @@ function AppShell() {
     try {
       await api.openPort(expected.port, expected.protocol);
     } catch (reason) {
-      setError(errorMessage(reason));
+      showError(errorMessage(reason));
     }
   };
 
@@ -439,7 +519,7 @@ function AppShell() {
     try {
       await api.openPort(port.port, port.protocol);
     } catch (reason) {
-      setError(errorMessage(reason));
+      showError(errorMessage(reason));
     }
   };
 
@@ -462,7 +542,7 @@ function AppShell() {
       setNotice(t("notice.processTerminated", { pid: externalProcess.pid }));
       await loadSnapshot(true);
     } catch (reason) {
-      setError(errorMessage(reason));
+      showError(errorMessage(reason));
     } finally {
       setTerminateBusy(false);
     }
@@ -488,7 +568,7 @@ function AppShell() {
       setNotice(t("notice.associationConfirmed", { port: port.port }));
       await loadSnapshot(true);
     } catch (reason) {
-      setError(errorMessage(reason));
+      showError(errorMessage(reason));
     }
   };
 
@@ -496,7 +576,27 @@ function AppShell() {
     try {
       await api.openProjectDirectory(projectId);
     } catch (reason) {
-      setError(errorMessage(reason));
+      showError(errorMessage(reason));
+    }
+  };
+
+  const focusRelatedPort = async () => {
+    if (!errorRelatedPort) return;
+    try {
+      const next = await api.getDashboardSnapshot();
+      const active = next.ports.some((port) =>
+        port.active && port.port === errorRelatedPort.port && port.protocol === errorRelatedPort.protocol,
+      );
+      setSnapshot(next);
+      showError(null);
+      if (!active) {
+        setNotice(t("ports.conflictChanged", { port: errorRelatedPort.port }));
+        return;
+      }
+      setActiveView("ports");
+      setPortFocus({ ...errorRelatedPort, nonce: Date.now() });
+    } catch (reason) {
+      showError(t("error.operationFailed", { detail: errorMessage(reason) }));
     }
   };
 
@@ -508,7 +608,7 @@ function AppShell() {
       await api.shutdownApp();
       setQuitOpen(false);
     } catch (reason) {
-      setError(errorMessage(reason));
+      showError(errorMessage(reason));
     } finally {
       shutdownInFlight.current = false;
       setQuitBusy(false);
@@ -537,7 +637,7 @@ function AppShell() {
       setCloseChoiceOpen(false);
       setRememberCloseChoice(false);
     } catch (reason) {
-      setError(
+      showError(
         savingPreference
           ? t("error.closeBehaviorSave", { detail: errorMessage(reason) })
           : t("error.operationFailed", { detail: errorMessage(reason) }),
@@ -557,7 +657,7 @@ function AppShell() {
       setSnapshot((current) => current ? { ...current, settings } : current);
       setNotice(t("notice.closeBehaviorReset"));
     } catch (reason) {
-      setError(t("error.closeBehaviorSave", { detail: errorMessage(reason) }));
+      showError(t("error.closeBehaviorSave", { detail: errorMessage(reason) }));
     } finally {
       setCloseBehaviorBusy(false);
     }
@@ -572,7 +672,7 @@ function AppShell() {
       await loadSnapshot(true);
     } catch (reason) {
       setElevationOpen(false);
-      setError(t("error.elevationFailed", { detail: errorMessage(reason) }));
+      showError(t("error.elevationFailed", { detail: errorMessage(reason) }));
     } finally {
       setElevationBusy(false);
     }
@@ -586,11 +686,71 @@ function AppShell() {
       await api.setLanguagePreference(next);
     } catch (reason) {
       setPreference(previous);
-      setError(`${t("error.languageSave")}: ${errorMessage(reason)}`);
+      showError(`${t("error.languageSave")}: ${errorMessage(reason)}`);
     } finally {
       setLanguageBusy(false);
     }
   };
+
+  const runHistoryLabels: RunHistoryLabels = useMemo(() => ({
+    recentTitle: t("history.title"),
+    recentDescription: t("history.subtitle"),
+    viewAll: t("history.viewAll"),
+    drawerTitle: t("history.title"),
+    drawerDescription: t("history.subtitle"),
+    close: t("history.close"),
+    searchPlaceholder: t("history.search"),
+    clearSearch: t("history.clearSearch"),
+    filterLabel: t("history.filterLabel"),
+    filters: {
+      all: t("history.filter.all"),
+      active: t("history.filter.active"),
+      exited: t("history.filter.exited"),
+      interrupted: t("history.filter.interrupted"),
+    },
+    project: t("history.project"),
+    profile: t("history.profile"),
+    status: t("history.status"),
+    pid: t("history.pid"),
+    startedAt: t("history.started"),
+    endedAt: t("history.ended"),
+    duration: t("history.duration"),
+    exitCode: t("history.exitCode"),
+    actions: t("history.actions"),
+    statusLabels: {
+      starting: t("history.status.starting"),
+      running: t("history.status.running"),
+      exited: t("history.status.exited"),
+      interrupted: t("history.status.interrupted"),
+      unknown: t("history.status.unknown"),
+    },
+    projectDeleted: t("history.projectDeleted"),
+    locate: (project, profile) => t("history.locateProject", { project, profile }),
+    loading: t("history.loading"),
+    empty: t("history.empty"),
+    noMatches: t("history.noMatches"),
+    unavailable: t("history.unavailable"),
+    retry: t("history.retry"),
+    sessionCount: (count) => t("history.sessionCount", { count }),
+    resultCount: (visible, total) => t("history.resultCount", { visible, total }),
+  }), [t]);
+
+  const locateRunHistory = useCallback((projectId: string, profileId: string) => {
+    setActiveView("projects");
+    setFocusedProjectId(projectId);
+    setRunHistoryDrawerOpen(false);
+    setNotice(t("history.locateProject", {
+      project: snapshot?.projects.find((project) => project.id === projectId)?.name ?? projectId,
+      profile: snapshot?.projects.flatMap((project) => project.profiles).find((profile) => profile.id === profileId)?.name ?? profileId,
+    }));
+  }, [snapshot?.projects, t]);
+
+  const clearPortFocus = useCallback(() => setPortFocus(null), []);
+  const clearProjectFocus = useCallback(() => setFocusedProjectId(null), []);
+
+  const refreshAll = useCallback(async () => {
+    await Promise.all([loadSnapshot(), loadRunHistory()]);
+  }, [loadRunHistory, loadSnapshot]);
 
   const selectedLog = useMemo(() => {
     if (!snapshot || !logSelection) return null;
@@ -699,7 +859,7 @@ function AppShell() {
               </select>
             </label>
             <span className="toolbar-divider" />
-            <IconButton label={t("scan.refresh")} onClick={() => void loadSnapshot()} disabled={refreshing} className={refreshing ? "is-spinning" : ""}>
+            <IconButton label={t("scan.refresh")} onClick={() => void refreshAll()} disabled={refreshing || runHistoryLoading} className={refreshing ? "is-spinning" : ""}>
               <RefreshCw size={15} />
             </IconButton>
           </div>
@@ -720,7 +880,19 @@ function AppShell() {
           {!loading && !snapshot && <div className="error-state" role="alert"><strong>{t("app.unavailable")}</strong><span>{error}</span><button className="button button--secondary" onClick={() => void loadSnapshot()}>{t("app.retry")}</button></div>}
           {snapshot && snapshot.scanError && <div className="scan-error" role="status">{t("scan.degraded", { detail: snapshot.scanError })}</div>}
           {snapshot && activeView === "overview" && (
-            <OverviewView snapshot={snapshot} restoreBusy={restoreBusy} onRestore={() => void restoreLastRunSet()} {...profileActionProps} />
+            <OverviewView
+              snapshot={snapshot}
+              restoreBusy={restoreBusy}
+              onRestore={() => void restoreLastRunSet()}
+              runHistory={runHistory}
+              runHistoryLoading={runHistoryLoading}
+              runHistoryError={runHistoryError}
+              runHistoryLabels={runHistoryLabels}
+              onRetryRunHistory={() => void loadRunHistory()}
+              onOpenRunHistory={() => setRunHistoryDrawerOpen(true)}
+              onLocateRunHistory={locateRunHistory}
+              {...profileActionProps}
+            />
           )}
           {snapshot && activeView === "ports" && (
             <PortsView
@@ -730,6 +902,8 @@ function AppShell() {
               onTerminate={setExternalProcess}
               onConfirmAssociation={(port) => void confirmPortAssociation(port)}
               onStartProfile={(profileId) => void runProfileAction(profileId, api.startProfile, "notice.startCompleted")}
+              focusRequest={portFocus}
+              onFocusHandled={clearPortFocus}
             />
           )}
           {snapshot && activeView === "projects" && (
@@ -749,11 +923,15 @@ function AppShell() {
                   void discoverKnownRoots(true);
                 }
               }}
+              discoveryState={discoveryState}
+              discoveryError={discoveryError}
               discoveredCount={discoverySuggestions?.length ?? 0}
               hasSavedDiscoveryRoot={Boolean(snapshot.settings.recentDevelopmentRoot)}
               monitorOnly={snapshot.privilege.monitorOnly}
               onEdit={setProjectModal}
               onDelete={setProjectToDelete}
+              focusedProjectId={focusedProjectId}
+              onFocusedProjectHandled={clearProjectFocus}
               {...profileActionProps}
             />
           )}
@@ -778,7 +956,6 @@ function AppShell() {
           registeredPaths={registeredProjectPaths}
           onClose={() => {
             setProjectModal(null);
-            setDiscoverySuggestions(null);
             setAutoDiscoveryMode(false);
           }}
           />
@@ -834,6 +1011,18 @@ function AppShell() {
             }}
           />
         )}
+        {runHistoryDrawerOpen && snapshot && !quitOpen && !elevationOpen && !helpOpen && (
+          <RunHistoryDrawer
+            sessions={runHistory}
+            projects={snapshot.projects}
+            loading={runHistoryLoading}
+            error={runHistoryError}
+            labels={runHistoryLabels}
+            onRetry={() => void loadRunHistory()}
+            onLocate={locateRunHistory}
+            onClose={() => setRunHistoryDrawerOpen(false)}
+          />
+        )}
         {quitOpen && (
           <ConfirmModal
           title={t("dialog.quitTitle")}
@@ -862,7 +1051,12 @@ function AppShell() {
           {error && snapshot && (
             <div className="toast toast--error" role="alert">
               <span>{error}</span>
-              <button type="button" onClick={() => setError(null)} aria-label={t("app.dismissError")}>×</button>
+              {errorRelatedPort && (
+                <button type="button" className="toast-action" onClick={() => void focusRelatedPort()}>
+                  {t("ports.viewOccupant")}
+                </button>
+              )}
+              <button type="button" onClick={() => showError(null)} aria-label={t("app.dismissError")}>×</button>
             </div>
           )}
           {notice && (

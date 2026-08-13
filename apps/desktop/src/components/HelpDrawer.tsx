@@ -1,5 +1,6 @@
 import {
   ArrowRight,
+  Clock3,
   FolderKanban,
   Network,
   Rocket,
@@ -16,7 +17,7 @@ import type { CloseBehavior } from "../types";
 import { IconButton } from "./IconButton";
 import { useDialogFocus } from "./useDialogFocus";
 
-export type HelpTopic = "quickStart" | "ports" | "projects" | "access" | "safety";
+export type HelpTopic = "quickStart" | "ports" | "projects" | "history" | "access" | "safety";
 
 interface HelpDrawerProps {
   initialTopic: HelpTopic;
@@ -31,6 +32,7 @@ const topics = [
   { id: "quickStart", icon: Rocket },
   { id: "ports", icon: Network },
   { id: "projects", icon: FolderKanban },
+  { id: "history", icon: Clock3 },
   { id: "access", icon: ShieldCheck },
   { id: "safety", icon: ShieldAlert },
 ] as const satisfies ReadonlyArray<{ id: HelpTopic; icon: LucideIcon }>;
@@ -71,6 +73,17 @@ const topicCopy = {
       ["help.projects.item4Title", "help.projects.item4Detail"],
     ],
     action: { label: "help.openProjects", view: "projects" },
+  },
+  history: {
+    label: "help.topic.history",
+    title: "help.history.title",
+    intro: "help.history.intro",
+    items: [
+      ["help.history.item1Title", "help.history.item1Detail"],
+      ["help.history.item2Title", "help.history.item2Detail"],
+      ["help.history.item3Title", "help.history.item3Detail"],
+      ["help.history.item4Title", "help.history.item4Detail"],
+    ],
   },
   access: {
     label: "help.topic.access",

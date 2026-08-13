@@ -1,5 +1,48 @@
 # RunCove Handoff
 
+## 2026-08-13 v0.2.1 Local Completion
+
+- Status: the approved implementation and full local verification are complete.
+  Changes remain uncommitted on local `main`; no remote, CI, release, tag, or
+  unrelated-process action has occurred.
+- Completed: run history, structured conflict navigation, discovery states and
+  retry, profile duplication and validation, port-detail copy controls, and
+  bilingual Help are implemented. Package and application metadata now report
+  `0.2.1`.
+- Final audit fixes: error messages now clear stale related-port actions, and a
+  conflict focus filters by the exact port plus protocol. Focused frontend
+  regression tests pass (`39/39`), and the expanded bilingual Help/project/i18n
+  tests pass (`22/22`).
+- Final verification: root Rust `38/38`; desktop Rust `109 passed / 1 ignored`;
+  frontend Vitest `114/114`, lint, typecheck, and build; Edge Playwright `6/6`
+  across the required viewports and new workflows; `git diff --check` passed.
+- Local release: RunCove file/product version `0.2.1`, `25,418,344` bytes,
+  SHA-256 `4B00DD7F72B6AAD29646684DB7F852D691C7183A4BF78DA703C06556A9BA3A78`,
+  unsigned. It was built but not launched, installed, packaged, or published.
+- Residual boundaries: desktop remains Windows-first, historical logs are not
+  archived, and the explicitly configured live-service acceptance remains
+  ignored by default. See `notes.md` for complete evidence.
+- Next session prompt: read `AGENTS.md`, `V0.2.1_PLAN.md`, this checkpoint, and
+  `notes.md`; inspect the uncommitted diff and decide whether to do an
+  interactive user smoke test, prepare one intentional commit, or begin a
+  separately approved release. Do not push, publish, tag, or change workflows
+  without explicit authorization.
+
+## 2026-08-12 v0.2.1 Implementation Checkpoint
+
+- Status: implementation started from clean `main` at `bf3d532`; no commit,
+  push, release, workflow, repository, tag, or unrelated-process action is
+  authorized.
+- Plan: `V0.2.1_PLAN.md` is the decision-complete implementation source.
+- In progress: establish the full verification baseline, then implement run
+  history, actionable conflict navigation, discovery feedback, project editor
+  validation/duplication, port-detail copy controls, and bilingual help.
+- Required completion: update this checkpoint and `notes.md` with fresh test,
+  E2E, and local release-build evidence. Keep the existing compatibility CLI.
+- Next session prompt: read `AGENTS.md`, `V0.2.1_PLAN.md`, this checkpoint, and
+  `notes.md`; inspect the working tree before continuing and preserve all
+  completed or concurrent work.
+
 ## Current Published Checkpoint (2026-08-12)
 
 - The GitHub repository is now canonically named `AbyssWhalen/RunCove`; the

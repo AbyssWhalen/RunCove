@@ -1,10 +1,11 @@
 use crate::discovery;
-use crate::error::{invalid, AppResult};
+use crate::error::{invalid, AppError, AppResult};
 use crate::import_observation;
 use crate::models::{
     AppSettings, AssociationSource, CloseBehavior, ConfirmAssociationRequest, DashboardSnapshot,
     DiscoveredProject, ExternalProcessRequest, LanguagePreference, PortAssociation, PortSnapshot,
-    Project, ProjectInput, RestoreResult, RunLogEvent, RunSession, RunStatus, RunStatusEvent,
+    Project, ProjectInput, RelatedPort, RestoreResult, RunLogEvent, RunSession, RunStatus,
+    RunStatusEvent,
 };
 use crate::state::AppState;
 use crate::storage::now_ms;
@@ -341,6 +342,7 @@ fn restore_profiles(
                     started_profile_ids: started,
                     failed_profile_id: Some(profile_id),
                     error: Some(error.to_string()),
+                    related_port: error.related_port().cloned(),
                 };
             }
         }
@@ -349,6 +351,7 @@ fn restore_profiles(
         started_profile_ids: started,
         failed_profile_id: None,
         error: None,
+        related_port: None,
     }
 }
 
@@ -618,21 +621,30 @@ fn start_profile_inner_reserved<R: Runtime>(
         ));
     }
     if let Some((port, process_name)) = first_conflict(&profile)? {
+        let related_port = RelatedPort {
+            port: port.port,
+            protocol: port.protocol.clone(),
+        };
         state.processes.set_status(profile_id, RunStatus::Conflict);
-        let event = status_event(
+        let message = format!(
+            "Expected port {} is already occupied{}",
+            port.port,
+            process_name
+                .map(|name| format!(" by {name}"))
+                .unwrap_or_default()
+        );
+        let event = status_event_with_related_port(
             profile_id.into(),
             RunStatus::Conflict,
             None,
-            Some(format!(
-                "Expected port {port} is already occupied{}",
-                process_name
-                    .map(|name| format!(" by {name}"))
-                    .unwrap_or_default()
-            )),
+            Some(message.clone()),
+            Some(related_port.clone()),
         );
         let _ = app.emit("run-status", &event);
-        return Err(invalid(
-            event.message.unwrap_or_else(|| "Port conflict".into()),
+        return Err(AppError::port_conflict(
+            message,
+            related_port.port,
+            related_port.protocol,
         ));
     }
 
@@ -744,7 +756,7 @@ fn wait_for_profile_stopped(
 
 fn first_conflict(
     profile: &crate::models::LaunchProfile,
-) -> AppResult<Option<(u16, Option<String>)>> {
+) -> AppResult<Option<(RelatedPort, Option<String>)>> {
     if profile.expected_ports.is_empty() {
         return Ok(None);
     }
@@ -759,7 +771,15 @@ fn first_conflict(
                     .protocol
                     .to_string()
                     .eq_ignore_ascii_case(&expected.protocol))
-            .then(|| (entry.port, entry.process_name.clone()))
+            .then(|| {
+                (
+                    RelatedPort {
+                        port: expected.port,
+                        protocol: expected.protocol.clone(),
+                    },
+                    entry.process_name.clone(),
+                )
+            })
         })
     }))
 }
@@ -823,11 +843,22 @@ fn status_event(
     pid: Option<u32>,
     message: Option<String>,
 ) -> RunStatusEvent {
+    status_event_with_related_port(profile_id, status, pid, message, None)
+}
+
+fn status_event_with_related_port(
+    profile_id: String,
+    status: RunStatus,
+    pid: Option<u32>,
+    message: Option<String>,
+    related_port: Option<RelatedPort>,
+) -> RunStatusEvent {
     RunStatusEvent {
         profile_id,
         status,
         pid,
         message,
+        related_port,
         unexpected: false,
         timestamp: now_ms(),
     }
@@ -1894,6 +1925,7 @@ setInterval(() => {}, 1000);
 
         assert_eq!(result.started_profile_ids, vec!["first"]);
         assert_eq!(result.failed_profile_id.as_deref(), Some("second"));
+        assert_eq!(result.related_port, None);
         assert_eq!(
             events.into_inner(),
             vec![
@@ -1904,6 +1936,68 @@ setInterval(() => {}, 1000);
                 "stop:second",
             ]
         );
+    }
+
+    #[test]
+    fn restore_result_preserves_structured_port_conflict_context() {
+        let result = restore_profiles(vec!["first".into(), "second".into()], |profile| {
+            if profile == "second" {
+                Err(AppError::port_conflict(
+                    "Expected port 5173 is already occupied",
+                    5173,
+                    "tcp",
+                ))
+            } else {
+                Ok(())
+            }
+        });
+
+        assert_eq!(result.started_profile_ids, vec!["first"]);
+        assert_eq!(result.failed_profile_id.as_deref(), Some("second"));
+        assert_eq!(
+            result.related_port,
+            Some(RelatedPort {
+                port: 5173,
+                protocol: "tcp".into(),
+            })
+        );
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["relatedPort"]["port"], 5173);
+        assert_eq!(json["relatedPort"]["protocol"], "tcp");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn restore_last_run_set_reports_the_detected_conflicting_port() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (_temp, app, profile_id) = npm_fixture("setInterval(() => {}, 1000);", port);
+        let state = app.state::<AppState>();
+        state
+            .storage
+            .save_restore_set(std::slice::from_ref(&profile_id))
+            .unwrap();
+
+        let result = restore_last_run_set_inner(app.handle(), &state).unwrap();
+
+        assert!(result.started_profile_ids.is_empty());
+        assert_eq!(
+            result.failed_profile_id.as_deref(),
+            Some(profile_id.as_str())
+        );
+        assert_eq!(
+            result.related_port,
+            Some(RelatedPort {
+                port,
+                protocol: "tcp".into(),
+            })
+        );
+        assert!(result
+            .error
+            .as_deref()
+            .is_some_and(|message| message.contains(&port.to_string())));
+        assert!(state.processes.info(&profile_id).is_none());
+        assert!(state.storage.list_sessions(10).unwrap().is_empty());
     }
 
     #[cfg(windows)]
@@ -1933,7 +2027,8 @@ setInterval(() => {}, 1000);
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
             if let Some((found, _)) = first_conflict(&profile).unwrap() {
-                assert_eq!(found, port);
+                assert_eq!(found.port, port);
+                assert_eq!(found.protocol, "tcp");
                 break;
             }
             assert!(
@@ -1942,6 +2037,32 @@ setInterval(() => {}, 1000);
             );
             std::thread::sleep(Duration::from_millis(25));
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn start_profile_returns_structured_conflict_without_starting_a_session() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (_temp, app, profile_id) = npm_fixture("setInterval(() => {}, 1000);", port);
+        let state = app.state::<AppState>();
+
+        let error = match start_profile_inner(&profile_id, app.handle(), &state) {
+            Err(error) if error.related_port().is_some() => error,
+            Err(error) => panic!("expected structured conflict, got {error}"),
+            Ok(_) => panic!("occupied port unexpectedly started the profile"),
+        };
+
+        assert_eq!(
+            error.related_port(),
+            Some(&RelatedPort {
+                port,
+                protocol: "tcp".into(),
+            })
+        );
+        assert!(error.to_string().contains(&port.to_string()));
+        assert!(state.processes.info(&profile_id).is_none());
+        assert!(state.storage.list_sessions(10).unwrap().is_empty());
     }
 
     #[cfg(windows)]

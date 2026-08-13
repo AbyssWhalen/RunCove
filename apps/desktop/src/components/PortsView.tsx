@@ -1,5 +1,5 @@
-import { BadgeCheck, ExternalLink, Info, Play, Search, Square, X } from "lucide-react";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { BadgeCheck, Check, Copy, ExternalLink, Info, Play, Search, Square, X } from "lucide-react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import { useI18n } from "../i18n";
 import type { MessageKey } from "../i18n";
@@ -17,6 +17,8 @@ interface PortsViewProps {
   onTerminate: (port: PortSnapshot) => void;
   onConfirmAssociation: (port: PortSnapshot) => void;
   onStartProfile: (profileId: string) => void;
+  focusRequest?: { port: number; protocol: PortSnapshot["protocol"]; nonce: number } | null;
+  onFocusHandled?: () => void;
 }
 
 function getProjectName(port: PortSnapshot, projects: Project[]): string | null {
@@ -45,7 +47,7 @@ function isCompactPortsTable(): boolean {
     window.matchMedia(COMPACT_PORTS_QUERY).matches;
 }
 
-export function PortsView({ snapshot, busyProfileIds, onOpenPort, onTerminate, onConfirmAssociation, onStartProfile }: PortsViewProps) {
+export function PortsView({ snapshot, busyProfileIds, onOpenPort, onTerminate, onConfirmAssociation, onStartProfile, focusRequest, onFocusHandled }: PortsViewProps) {
   const { t, formatDateTime } = useI18n();
   const monitorOnly = snapshot.privilege.monitorOnly;
   const processActionLabel = (label: string) =>
@@ -54,7 +56,18 @@ export function PortsView({ snapshot, busyProfileIds, onOpenPort, onTerminate, o
   const [filter, setFilter] = useState<PortFilter>("all");
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [compactTable, setCompactTable] = useState(isCompactPortsTable);
+  const [highlightedKey, setHighlightedKey] = useState<string | null>(null);
+  const [copyError, setCopyError] = useState<string | null>(null);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
+  const onFocusHandledRef = useRef(onFocusHandled);
+  onFocusHandledRef.current = onFocusHandled;
   const displayPorts = useMemo(() => groupDisplayPorts(snapshot.ports), [snapshot.ports]);
+  const displayPortsRef = useRef(displayPorts);
+  displayPortsRef.current = displayPorts;
+
+  const keyForPort = (port: PortSnapshot, index: number) =>
+    `${port.protocol}:${port.bindAddress}:${port.port}:${port.projectId}:${port.profileId}:${port.associationSource}:${index}`;
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
@@ -87,6 +100,50 @@ export function PortsView({ snapshot, busyProfileIds, onOpenPort, onTerminate, o
       return matchesFilter && (!needle || haystack.includes(needle));
     });
   }, [displayPorts, filter, query, snapshot.projects]);
+
+  useEffect(() => {
+    if (!focusRequest) return;
+    setFilter("all");
+    setQuery(`${focusRequest.port} ${focusRequest.protocol}`);
+    const currentPorts = displayPortsRef.current;
+    const index = currentPorts.findIndex((port) =>
+      port.port === focusRequest.port && port.protocol === focusRequest.protocol,
+    );
+    if (index < 0) {
+      onFocusHandledRef.current?.();
+      return;
+    }
+    const key = keyForPort(currentPorts[index], index);
+    setExpandedKey(key);
+    setHighlightedKey(key);
+    const frame = window.requestAnimationFrame(() => {
+      rowRefs.current.get(key)?.scrollIntoView({ block: "center", behavior: "smooth" });
+      rowRefs.current.get(key)?.focus({ preventScroll: true });
+    });
+    const timer = window.setTimeout(() => {
+      setHighlightedKey(null);
+      onFocusHandledRef.current?.();
+    }, 2_400);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [focusRequest]);
+
+  const copyValue = async (field: string, value: string) => {
+    setCopyError(null);
+    if (!navigator.clipboard) {
+      setCopyError(t("ports.copyUnavailable"));
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedField(field);
+      window.setTimeout(() => setCopiedField((current) => current === field ? null : current), 1_800);
+    } catch (reason) {
+      setCopyError(t("ports.copyFailed", { detail: reason instanceof Error ? reason.message : String(reason) }));
+    }
+  };
 
   return (
     <section className="data-section view-stack" aria-labelledby="ports-heading">
@@ -141,7 +198,8 @@ export function PortsView({ snapshot, busyProfileIds, onOpenPort, onTerminate, o
           </thead>
           <tbody>
             {filteredPorts.map((port, index) => {
-              const key = `${port.protocol}:${port.bindAddress}:${port.port}:${port.projectId}:${port.profileId}:${port.associationSource}:${index}`;
+              const displayIndex = displayPorts.indexOf(port);
+              const key = keyForPort(port, displayIndex >= 0 ? displayIndex : index);
               const projectName = getProjectName(port, snapshot.projects);
               const hasVerifiedIdentity = hasVerifiedProcessIdentity(port);
               const canConfirm = hasVerifiedIdentity && port.associationSource === "suggested" && Boolean(port.projectId);
@@ -149,7 +207,14 @@ export function PortsView({ snapshot, busyProfileIds, onOpenPort, onTerminate, o
               const expanded = expandedKey === key;
               return (
                 <Fragment key={key}>
-                <tr className={expanded ? "is-expanded" : ""}>
+                <tr
+                  ref={(element) => {
+                    if (element) rowRefs.current.set(key, element);
+                    else rowRefs.current.delete(key);
+                  }}
+                  className={`${expanded ? "is-expanded" : ""}${highlightedKey === key ? " is-focused-port" : ""}`}
+                  tabIndex={highlightedKey === key ? -1 : undefined}
+                >
                   <td className="port-cell"><strong>{port.port}</strong><span>/{port.protocol}</span></td>
                   <td>
                     <span className={`port-state ${port.active ? "port-state--active" : "port-state--historical"}`}>
@@ -206,13 +271,15 @@ export function PortsView({ snapshot, busyProfileIds, onOpenPort, onTerminate, o
                       <div className="port-detail-panel" role="region" aria-label={t("ports.details", { port: port.port })}>
                         <dl>
                           <div><dt>{t("ports.binding")}</dt><dd>{port.bindAddress ?? t("ports.unavailable")}</dd></div>
+                          <div><dt>{t("table.pid")}</dt><dd className="copyable-detail"><span>{port.pid ?? t("ports.unavailable")}</span>{port.pid != null && <IconButton label={t("ports.copyPid", { pid: port.pid })} onClick={() => void copyValue(`${key}:pid`, String(port.pid))}>{copiedField === `${key}:pid` ? <Check size={13} /> : <Copy size={13} />}</IconButton>}</dd></div>
                           <div><dt>{t("table.project")}</dt><dd>{projectName ?? t("association.unassigned")}</dd></div>
                           <div><dt>{t("ports.association")}</dt><dd><AssociationBadge source={port.associationSource} /></dd></div>
                           <div><dt>{t("ports.lastSeen")}</dt><dd>{port.lastSeenAt ? formatDateTime(port.lastSeenAt, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "-"}</dd></div>
-                          <div><dt>{t("ports.executable")}</dt><dd>{port.executablePath ?? t("ports.unavailable")}</dd></div>
-                          <div><dt>{t("table.command")}</dt><dd>{port.commandLine?.trim() || t("ports.unavailable")}</dd></div>
+                          <div><dt>{t("ports.executable")}</dt><dd className="copyable-detail"><span>{port.executablePath ?? t("ports.unavailable")}</span>{port.executablePath && <IconButton label={t("ports.copyExecutable")} onClick={() => void copyValue(`${key}:executable`, port.executablePath!)}>{copiedField === `${key}:executable` ? <Check size={13} /> : <Copy size={13} />}</IconButton>}</dd></div>
+                          <div><dt>{t("table.command")}</dt><dd className="copyable-detail"><span>{port.commandLine?.trim() || t("ports.unavailable")}</span>{port.commandLine?.trim() && <IconButton label={t("ports.copyCommand")} onClick={() => void copyValue(`${key}:command`, port.commandLine!)}>{copiedField === `${key}:command` ? <Check size={13} /> : <Copy size={13} />}</IconButton>}</dd></div>
                           <div><dt>{t("ports.processStarted")}</dt><dd>{port.processStartedAt ? formatDateTime(port.processStartedAt, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "-"}</dd></div>
                         </dl>
+                        {copyError && <div className="port-copy-error" role="alert">{copyError}</div>}
                       </div>
                     </td>
                   </tr>

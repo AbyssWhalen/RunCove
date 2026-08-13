@@ -12,7 +12,9 @@ import { activeDisplayPortCount } from "../port-display";
 import { canOpenProfilePort } from "../profile-actions";
 import { useI18n } from "../i18n";
 import type { DashboardSnapshot, LaunchProfile, Project } from "../types";
+import type { RunSession } from "../types";
 import { IconButton } from "./IconButton";
+import { RunHistorySection, type RunHistoryLabels } from "./RunHistorySection";
 import { StatusBadge } from "./StatusBadge";
 
 interface OverviewViewProps {
@@ -26,6 +28,13 @@ interface OverviewViewProps {
   onOpenPort: (profile: LaunchProfile) => void;
   onOpenDirectory: (projectId: string) => void;
   onOpenLogs: (profile: LaunchProfile, project: Project) => void;
+  runHistory?: RunSession[];
+  runHistoryLoading?: boolean;
+  runHistoryError?: string | null;
+  runHistoryLabels?: RunHistoryLabels;
+  onRetryRunHistory?: () => void;
+  onOpenRunHistory?: () => void;
+  onLocateRunHistory?: (projectId: string, profileId: string) => void;
 }
 
 export function OverviewView({
@@ -39,6 +48,13 @@ export function OverviewView({
   onOpenPort,
   onOpenDirectory,
   onOpenLogs,
+  runHistory = [],
+  runHistoryLoading = false,
+  runHistoryError,
+  runHistoryLabels,
+  onRetryRunHistory = () => undefined,
+  onOpenRunHistory = () => undefined,
+  onLocateRunHistory = () => undefined,
 }: OverviewViewProps) {
   const { t, formatDateTime, formatTime } = useI18n();
   const profiles = snapshot.projects.flatMap((project) =>
@@ -176,6 +192,16 @@ export function OverviewView({
           {profiles.length === 0 && <div className="empty-state">{t("overview.noProfiles")}</div>}
         </div>
       </section>
+      {runHistoryLabels && <RunHistorySection
+        sessions={runHistory}
+        projects={snapshot.projects}
+        loading={runHistoryLoading}
+        error={runHistoryError}
+        labels={runHistoryLabels}
+        onRetry={onRetryRunHistory}
+        onLocate={onLocateRunHistory}
+        onOpenAll={onOpenRunHistory}
+      />}
     </div>
   );
 }

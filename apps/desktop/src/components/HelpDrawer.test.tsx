@@ -2,48 +2,63 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { I18nProvider } from "../i18n";
 import { HelpDrawer } from "./HelpDrawer";
 
-vi.mock("../i18n", () => ({
-  useI18n: () => ({ t: (key: string) => key }),
-}));
+function renderHelp(
+  initialTopic: React.ComponentProps<typeof HelpDrawer>["initialTopic"],
+  language: "en" | "zh-CN" = "en",
+  overrides: Partial<React.ComponentProps<typeof HelpDrawer>> = {},
+) {
+  window.localStorage.setItem("runcove.language", language);
+  const props: React.ComponentProps<typeof HelpDrawer> = {
+    initialTopic,
+    closeBehavior: "ask",
+    onClose: vi.fn(),
+    onNavigate: vi.fn(),
+    onResetCloseBehavior: vi.fn(),
+    ...overrides,
+  };
+  render(<I18nProvider><HelpDrawer {...props} /></I18nProvider>);
+  return props;
+}
 
 describe("HelpDrawer", () => {
   it("opens on the requested initial topic", () => {
-    render(<HelpDrawer initialTopic="projects" closeBehavior="ask" onClose={vi.fn()} onNavigate={vi.fn()} onResetCloseBehavior={vi.fn()} />);
+    renderHelp("projects");
 
-    expect(screen.getByRole("dialog")).toHaveAccessibleName("help.title");
-    expect(screen.getByRole("tab", { name: "help.topic.projects" })).toHaveAttribute(
+    expect(screen.getByRole("dialog")).toHaveAccessibleName("RunCove Help");
+    expect(screen.getByRole("tab", { name: "Projects" })).toHaveAttribute(
       "aria-selected",
       "true",
     );
-    expect(screen.getByRole("tabpanel")).toHaveTextContent("help.projects.title");
-    expect(screen.getByRole("tabpanel")).toHaveTextContent("help.projects.item4Detail");
+    expect(screen.getByRole("tabpanel")).toHaveTextContent("Manage projects and launch profiles");
+    expect(screen.getByRole("tabpanel")).toHaveTextContent("Unknown means readiness cannot be confirmed");
   });
 
   it("switches topics with tabs and the keyboard", async () => {
     const user = userEvent.setup();
-    render(<HelpDrawer initialTopic="quickStart" closeBehavior="ask" onClose={vi.fn()} onNavigate={vi.fn()} onResetCloseBehavior={vi.fn()} />);
+    renderHelp("quickStart");
 
-    const portsTab = screen.getByRole("tab", { name: "help.topic.ports" });
+    const portsTab = screen.getByRole("tab", { name: "Ports" });
     await user.click(portsTab);
     expect(portsTab).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tabpanel")).toHaveTextContent("help.ports.intro");
+    expect(screen.getByRole("tabpanel")).toHaveTextContent("Ports combines live Windows listeners");
 
     await user.keyboard("{ArrowRight}");
-    expect(screen.getByRole("tab", { name: "help.topic.projects" })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: "Projects" })).toHaveAttribute(
       "aria-selected",
       "true",
     );
-    expect(screen.getByRole("tabpanel")).toHaveTextContent("help.projects.title");
+    expect(screen.getByRole("tabpanel")).toHaveTextContent("Manage projects and launch profiles");
   });
 
   it("navigates to the view linked from the active topic", async () => {
     const user = userEvent.setup();
     const onNavigate = vi.fn();
-    render(<HelpDrawer initialTopic="ports" closeBehavior="ask" onClose={vi.fn()} onNavigate={onNavigate} onResetCloseBehavior={vi.fn()} />);
+    renderHelp("ports", "en", { onNavigate });
 
-    await user.click(screen.getByRole("button", { name: "help.openPorts" }));
+    await user.click(screen.getByRole("button", { name: "Open Ports" }));
     expect(onNavigate).toHaveBeenCalledOnce();
     expect(onNavigate).toHaveBeenCalledWith("ports");
   });
@@ -51,7 +66,7 @@ describe("HelpDrawer", () => {
   it("closes on Escape", async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
-    render(<HelpDrawer initialTopic="safety" closeBehavior="ask" onClose={onClose} onNavigate={vi.fn()} onResetCloseBehavior={vi.fn()} />);
+    renderHelp("safety", "en", { onClose });
 
     await user.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalledOnce();
@@ -60,18 +75,20 @@ describe("HelpDrawer", () => {
   it("shows and resets a remembered title-bar close behavior", async () => {
     const user = userEvent.setup();
     const onResetCloseBehavior = vi.fn();
-    render(
-      <HelpDrawer
-        initialTopic="safety"
-        closeBehavior="quit"
-        onClose={vi.fn()}
-        onNavigate={vi.fn()}
-        onResetCloseBehavior={onResetCloseBehavior}
-      />,
-    );
+    renderHelp("safety", "en", { closeBehavior: "quit", onResetCloseBehavior });
 
-    expect(screen.getByRole("tabpanel")).toHaveTextContent("help.closeBehaviorQuit");
-    await user.click(screen.getByRole("button", { name: "help.closeBehaviorReset" }));
+    expect(screen.getByRole("tabpanel")).toHaveTextContent("Current: Quit RunCove");
+    await user.click(screen.getByRole("button", { name: "Ask every time" }));
     expect(onResetCloseBehavior).toHaveBeenCalledOnce();
+  });
+
+  it("renders the run-history guidance in Chinese", () => {
+    renderHelp("history", "zh-CN");
+
+    expect(screen.getByRole("dialog")).toHaveAccessibleName("RunCove 使用帮助");
+    expect(screen.getByRole("tab", { name: "运行历史" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { name: "看懂运行历史" })).toBeVisible();
+    expect(screen.getByRole("tabpanel")).toHaveTextContent("冲突与恢复失败");
+    expect(screen.getByRole("tabpanel")).toHaveTextContent("不会保存历史日志");
   });
 });
