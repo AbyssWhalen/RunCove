@@ -1,22 +1,22 @@
-# RunCove v0.2.0
+# RunCove v0.2.1
 
-RunCove turns the original port-only repository into a Windows-first local
-development runtime center. The distribution includes the `runcove` CLI and a
-compatibility executable for existing scripts.
+RunCove v0.2.1 makes the Windows local-development runtime center easier to
+understand and diagnose. The distribution includes the Windows desktop app,
+the cross-platform `runcove` CLI, and a compatibility executable for existing
+scripts.
 
 ## Highlights
 
-- Monitor active TCP and UDP listeners with PID, process, executable, command,
-  binding, and trusted project association details when Windows permits them.
-- Discover npm and pnpm projects, review structured launch profiles, and keep
-  expected ports together with each project.
-- Start, stop, and restart managed process trees, inspect bounded in-memory
-  logs, detect conflicts, and restore the profiles that were running before the
-  previous explicit exit.
-- Use the native title-bar close choice and system tray without losing managed
-  service state. Launching RunCove again now restores an existing hidden window.
-- Use the built-in English and Simplified Chinese help guide for the main
-  workflows and safety boundaries.
+- Review the five most recent managed sessions on Overview, or search and
+  filter up to 200 stored run-history records in the history drawer.
+- Jump from an expected-port conflict to the exact TCP or UDP listener after a
+  fresh snapshot check, without automatically terminating another process.
+- See explicit saved-root discovery states, retry failed scans, and keep
+  candidates available until they are reviewed or successfully imported.
+- Copy launch profiles, validate project fields before saving, and copy PID,
+  executable-path, or command-line details directly from the Ports view.
+- Use expanded English and Simplified Chinese help for run history, conflicts,
+  restore failures, project discovery, and the non-persistent log boundary.
 
 ## Security Boundaries
 
@@ -29,6 +29,8 @@ compatibility executable for existing scripts.
   Windows system `taskkill.exe`.
 - Project commands remain structured as `program`, `args[]`, and `cwd`; logs are
   bounded in memory and are not persisted by default.
+- Existing SQLite data remains compatible. No schema migration is introduced,
+  and raw polling snapshots are not persisted.
 
 ## Downloads
 
@@ -43,4 +45,5 @@ may show an unknown-publisher warning. Verify the archive against
 `SHA256SUMS.txt` and download it only from this GitHub release. Microsoft Edge
 WebView2 Runtime is required and is included with current Windows 11 systems.
 
-The original `v0.1.0` tag and release remain unchanged.
+The previous `v0.2.0` release and the original `v0.1.0` tag and release remain
+available unchanged.

@@ -2,9 +2,7 @@
 
 All notable user-facing changes to RunCove are documented in this file.
 
-## [Unreleased]
-
-These changes are planned for v0.2.1 and have not been published.
+## [0.2.1] - 2026-08-13
 
 ### Added
 

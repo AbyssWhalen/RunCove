@@ -2,17 +2,17 @@
 
 > Local dev services, under control.
 
-RunCove v0.2.0 is a Windows-first desktop control center for local development services. It combines live port inspection with a trusted project registry, structured launch profiles, process-tree control, session logs, and on-demand restoration of the projects that were running before the app exited.
+RunCove v0.2.1 is a Windows-first desktop control center for local development services. It combines live port inspection with a trusted project registry, structured launch profiles, process-tree control, session logs, and on-demand restoration of the projects that were running before the app exited.
 
 The distribution also includes the cross-platform `runcove` port-inspection CLI. The desktop application is Windows-first; the CLI is available on Windows, macOS, and Linux.
 
-The v0.2.0 release is distributed as a portable Windows x64 zip from the [RunCove Releases page](https://github.com/AbyssWhalen/RunCove/releases). The original v0.1.0 CLI release remains available in the release history for existing installations.
+The v0.2.1 release is distributed as a portable Windows x64 zip from the [RunCove Releases page](https://github.com/AbyssWhalen/RunCove/releases). The original v0.1.0 CLI release remains available in the release history for existing installations.
 
-## Development Status / 开发状态
+## Current Release / 当前版本
 
-RunCove v0.2.1 is currently in development and has not been published. The
-latest public download remains v0.2.0. / RunCove v0.2.1 目前仍在开发中，尚未发布；
-当前公开下载版本仍为 v0.2.0。
+RunCove v0.2.1 improves daily Windows usability and diagnostics without changing
+the local-only data or process-safety boundaries. / RunCove v0.2.1 在不改变本地数据与
+进程安全边界的前提下，重点增强 Windows 日常使用体验和诊断能力。
 
 - **Run history / 运行历史:** Overview shows the five most recent managed
   sessions, while the history drawer can search and filter up to 200 stored
@@ -44,11 +44,11 @@ latest public download remains v0.2.0. / RunCove v0.2.1 目前仍在开发中，
 
 ## Download And Run
 
-1. Download the RunCove v0.2.0 Windows x64 portable zip from the [Releases page](https://github.com/AbyssWhalen/RunCove/releases).
+1. Download the RunCove v0.2.1 Windows x64 portable zip from the [Releases page](https://github.com/AbyssWhalen/RunCove/releases).
 2. Extract the zip to a directory you control.
 3. Run `runcove-desktop.exe`.
 
-RunCove v0.2.0 is portable and does not include an installer. The executable is currently unsigned, so Windows SmartScreen may show an unknown-publisher warning; verify that the archive came from this repository's release before choosing to run it. RunCove uses the Microsoft Edge WebView2 Runtime, which is included with current Windows 11 installations and can be installed separately on older or stripped-down systems.
+RunCove v0.2.1 is portable and does not include an installer. The executable is currently unsigned, so Windows SmartScreen may show an unknown-publisher warning; verify that the archive came from this repository's release before choosing to run it. RunCove uses the Microsoft Edge WebView2 Runtime, which is included with current Windows 11 installations and can be installed separately on older or stripped-down systems.
 
 ## Desktop App
 
@@ -95,7 +95,7 @@ Build the release executable from the same directory:
 npm run tauri build
 ```
 
-Tauri bundling is disabled because the public v0.2.0 artifact is a Windows x64 portable zip rather than an installer. The release executable is written below `apps/desktop/src-tauri/target/` and then packaged with the release documentation.
+Tauri bundling is disabled because the public v0.2.1 artifact is a Windows x64 portable zip rather than an installer. The release executable is written below `apps/desktop/src-tauri/target/` and then packaged with the release documentation.
 
 ### CLI
 
@@ -198,9 +198,9 @@ Generated `target/`, `dist/`, `node_modules/`, runtime database, and captured-lo
 
 Project discovery imports a selected npm or pnpm package/workspace root or performs a bounded best-effort recursive scan of a development root. The last successful development root is saved in RunCove's settings and scanned once on the next startup; findings remain review candidates and are never registered automatically. Unreadable or excessively deep unrelated subtrees are skipped without discarding valid projects already found. Workspace patterns are read from `package.json` and the common block-list or inline-list forms of `pnpm-workspace.yaml`.
 
-## v0.2.0 Scope
+## v0.2.1 Scope
 
-RunCove v0.2.0 focuses on reliable Windows port and process lifecycle management. It intentionally does not include:
+RunCove v0.2.1 focuses on reliable Windows port and process lifecycle management. It intentionally does not include:
 
 - Start at login or automatic project startup
 - Docker or remote-host management

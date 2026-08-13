@@ -3,8 +3,9 @@
 ## v0.2.1 Local Completion (2026-08-13)
 
 - Implemented the approved `V0.2.1_PLAN.md` from `main` commit `bf3d532`
-  without changing CI/release workflows, Git history, tags, or remote state.
-  The work remains uncommitted and unpublished.
+  without changing CI/release workflows. PR #2 passed every configured check
+  and merged into `main` as `a771c55f402bcdce3d0ec29fe739d4e47bd847c5`;
+  publication evidence is recorded separately after the tag workflow completes.
 - Overview now shows the five newest managed run sessions, with a searchable
   and filterable drawer capped at 200 records. Orphaned history remains
   readable, known projects can be located, and future unknown stored statuses

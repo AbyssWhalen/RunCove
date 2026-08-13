@@ -1,10 +1,11 @@
 # RunCove Handoff
 
-## 2026-08-13 v0.2.1 Local Completion
+## 2026-08-13 v0.2.1 Release Candidate
 
 - Status: the approved implementation and full local verification are complete.
-  Changes remain uncommitted on local `main`; no remote, CI, release, tag, or
-  unrelated-process action has occurred.
+  PR #2 merged into `main` as `a771c55f402bcdce3d0ec29fe739d4e47bd847c5`.
+  The release tag and GitHub Release are pending final main-branch CI and release
+  documentation; no unrelated process action has occurred.
 - Completed: run history, structured conflict navigation, discovery states and
   retry, profile duplication and validation, port-detail copy controls, and
   bilingual Help are implemented. Package and application metadata now report
@@ -23,10 +24,9 @@
   archived, and the explicitly configured live-service acceptance remains
   ignored by default. See `notes.md` for complete evidence.
 - Next session prompt: read `AGENTS.md`, `V0.2.1_PLAN.md`, this checkpoint, and
-  `notes.md`; inspect the uncommitted diff and decide whether to do an
-  interactive user smoke test, prepare one intentional commit, or begin a
-  separately approved release. Do not push, publish, tag, or change workflows
-  without explicit authorization.
+  `notes.md`; verify the v0.2.1 tag, Release workflow, published assets, and
+  checksums before declaring publication complete. Do not change workflows or
+  rerun GitHub jobs merely to repeat already-green evidence.
 
 ## 2026-08-12 v0.2.1 Implementation Checkpoint
 
