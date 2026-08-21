@@ -6,6 +6,9 @@ import type {
   ProjectInput,
   RestoreResult,
   RunCoveApi,
+  RunLogArchivePage,
+  RunLogArchiveRecord,
+  RunLogArchiveSummary,
   RunLogEvent,
   RunSession,
   RunStatusEvent,
@@ -13,6 +16,8 @@ import type {
 
 const fixedNow = Date.parse("2026-08-07T08:30:00.000Z");
 const savedRootScanFailureKey = "runcove:e2e:saved-root-scan-failure-once";
+/** Set this key to preview the state where the archive failed to initialize. */
+const archiveUnavailableKey = "runcove:e2e:archive-unavailable";
 
 const initialSnapshot: DashboardSnapshot = {
   generatedAt: fixedNow,
@@ -22,12 +27,18 @@ const initialSnapshot: DashboardSnapshot = {
     elevationAvailable: true,
     monitorOnly: false,
   },
+  runLogArchive: {
+    enabled: false,
+    available: true,
+    unavailableReason: null,
+  },
   settings: {
     pollIntervalMs: 2_000,
     logCapacity: 500,
     languagePreference: "system",
     recentDevelopmentRoot: "D:\\CodexProject\\personal-projects",
     closeBehavior: "ask",
+    archiveRunLogs: false,
   },
   restoreSet: {
     profileIds: ["profile-studio-web", "profile-docs"],
@@ -186,6 +197,136 @@ const initialLogs: Record<string, RunLogEvent[]> = {
   ],
 };
 
+/**
+ * One archived session in the browser preview.
+ *
+ * The real archive is a file of one JSON record per line and pages backwards over
+ * byte offsets. The mock keeps the records in memory but encodes them the same way
+ * to derive offsets and sizes, so a viewer written against these numbers is written
+ * against the real cursor contract.
+ */
+interface MockArchive {
+  status: string;
+  reason: string | null;
+  droppedLines: number;
+  droppedBytes: number;
+  records: RunLogArchiveRecord[];
+}
+
+/**
+ * The mock serves twelve records per page instead of the command's default of 500,
+ * so the browser preview can page without fabricating hundreds of lines.
+ */
+const mockPageRecords = 12;
+
+function encodedLength(record: RunLogArchiveRecord): number {
+  const encoded = JSON.stringify({ t: record.timestamp, s: record.stream, l: record.line });
+  return new TextEncoder().encode(`${encoded}\n`).length;
+}
+
+/** Byte offset of the end of every record, in file order. */
+function recordEnds(records: RunLogArchiveRecord[]): number[] {
+  let offset = 0;
+  return records.map((record) => (offset += encodedLength(record)));
+}
+
+function archiveSummary(archive: MockArchive, endedAt: number | null): RunLogArchiveSummary {
+  const ends = recordEnds(archive.records);
+  return {
+    status: archive.status,
+    reason: archive.reason,
+    lineCount: archive.records.length,
+    byteSize: ends.at(-1) ?? 0,
+    droppedLines: archive.droppedLines,
+    droppedBytes: archive.droppedBytes,
+    startedAt: archive.records[0]?.timestamp ?? fixedNow,
+    endedAt,
+  };
+}
+
+function viteStartup(profileId: string, startedAt: number, count: number): RunLogArchiveRecord[] {
+  const lines = [
+    "> abyss-studio@0.4.2 dev",
+    "> vite --host 127.0.0.1",
+    "VITE v6.0.5  ready in 361 ms",
+    "  ➜  Local:   http://localhost:5173/",
+    "  ➜  Network: use --host to expose",
+    "12:12:26 [vite] hmr update /src/routes/dashboard.tsx",
+    "12:12:31 [vite] page reload src/main.tsx",
+  ];
+  return Array.from({ length: count }, (_, index) => ({
+    stream: index === 0 ? "system" : index % 9 === 8 ? "stderr" : "stdout",
+    line:
+      index === 0
+        ? `Started npm.cmd run dev for ${profileId}`
+        : index % 9 === 8
+          ? `12:${13 + index}:04 [vite] warning: dynamic import cannot be analysed (line ${index})`
+          : `${lines[index % lines.length]} (line ${index})`,
+    timestamp: startedAt + index * 1_000,
+  }));
+}
+
+const initialArchives: Record<string, MockArchive> = {
+  "session-web-current": {
+    status: "writing",
+    reason: null,
+    droppedLines: 0,
+    droppedBytes: 0,
+    records: viteStartup("profile-studio-web", Date.parse("2026-08-07T08:12:24.000Z"), 30),
+  },
+  "session-docs-exited": {
+    status: "complete",
+    reason: null,
+    droppedLines: 0,
+    droppedBytes: 0,
+    records: [
+      {
+        stream: "system",
+        line: "Started pnpm.cmd dev (PID 17320)",
+        timestamp: Date.parse("2026-08-06T16:40:00.000Z"),
+      },
+      {
+        stream: "stdout",
+        line: "astro  v5.1.1 ready in 512 ms",
+        timestamp: Date.parse("2026-08-06T16:40:01.000Z"),
+      },
+      {
+        stream: "stdout",
+        line: "┃ Local    http://localhost:4321/",
+        timestamp: Date.parse("2026-08-06T16:40:01.000Z"),
+      },
+      {
+        stream: "system",
+        line: "Process exited with code 0",
+        timestamp: Date.parse("2026-08-06T16:41:12.000Z"),
+      },
+    ],
+  },
+  "session-orphaned": {
+    status: "partial",
+    reason: "quota-exceeded",
+    droppedLines: 184,
+    droppedBytes: 61_440,
+    records: [
+      {
+        stream: "system",
+        line: "Started node.exe worker.js (PID 16004)",
+        timestamp: Date.parse("2026-08-05T09:00:00.000Z"),
+      },
+      {
+        stream: "stderr",
+        line: "worker: retrying upstream connection (attempt 41)",
+        timestamp: Date.parse("2026-08-05T09:01:00.000Z"),
+      },
+      {
+        stream: "system",
+        line: "[runcove] 184 lines (61440 bytes) dropped",
+        timestamp: Date.parse("2026-08-05T09:03:05.000Z"),
+      },
+    ],
+  },
+};
+
 const initialRunHistory: RunSession[] = [
   {
     id: "session-web-current",
@@ -196,6 +337,7 @@ const initialRunHistory: RunSession[] = [
     endedAt: null,
     exitCode: null,
     status: "running",
+    archive: archiveSummary(initialArchives["session-web-current"], null),
   },
   {
     id: "session-docs-exited",
@@ -206,6 +348,10 @@ const initialRunHistory: RunSession[] = [
     endedAt: Date.parse("2026-08-06T16:41:12.000Z"),
     exitCode: 0,
     status: "exited",
+    archive: archiveSummary(
+      initialArchives["session-docs-exited"],
+      Date.parse("2026-08-06T16:41:12.000Z"),
+    ),
   },
   {
     id: "session-orphaned",
@@ -216,6 +362,10 @@ const initialRunHistory: RunSession[] = [
     endedAt: Date.parse("2026-08-05T09:03:05.000Z"),
     exitCode: null,
     status: "interrupted",
+    archive: archiveSummary(
+      initialArchives["session-orphaned"],
+      Date.parse("2026-08-05T09:03:05.000Z"),
+    ),
   },
 ];
 
@@ -264,6 +414,7 @@ export function createMockApi(): MockRunCoveApi {
   let snapshot = clone(initialSnapshot);
   let logs = clone(initialLogs);
   let runHistory = clone(initialRunHistory);
+  let archives = clone(initialArchives);
   const statusHandlers = new Set<(event: RunStatusEvent) => void>();
   const statusEventListeners = new Set<EventListener>();
   const logHandlers = new Set<(event: RunLogEvent) => void>();
@@ -301,6 +452,7 @@ export function createMockApi(): MockRunCoveApi {
       snapshot = clone(initialSnapshot);
       logs = clone(initialLogs);
       runHistory = clone(initialRunHistory);
+      archives = clone(initialArchives);
       mockSequence = 100;
       statusHandlers.clear();
       statusEventListeners.forEach((listener) => window.removeEventListener("runcove:mock-run-status", listener));
@@ -310,6 +462,14 @@ export function createMockApi(): MockRunCoveApi {
     },
     async getDashboardSnapshot() {
       snapshot.generatedAt = fixedNow;
+      if (sessionStorage.getItem(archiveUnavailableKey) === "1") {
+        snapshot.runLogArchive = {
+          enabled: snapshot.settings.archiveRunLogs,
+          available: false,
+          unavailableReason:
+            "Could not create the run log archive directory: access is denied (mock preview)",
+        };
+      }
       return clone(snapshot);
     },
     async discoverProject(directory) {
@@ -432,6 +592,79 @@ export function createMockApi(): MockRunCoveApi {
     async getRunHistory() {
       return clone(runHistory).sort((left, right) => right.startedAt - left.startedAt).slice(0, 200);
     },
+    async setRunLogArchiving(enabled) {
+      if (snapshot.runLogArchive.available === false) {
+        throw new Error("The run log archive is unavailable in this preview");
+      }
+      snapshot.settings.archiveRunLogs = enabled;
+      snapshot.runLogArchive = { enabled, available: true, unavailableReason: null };
+      return clone(snapshot.runLogArchive);
+    },
+    async readRunLogArchive(sessionId, beforeOffset, maxLines) {
+      const archive = archives[sessionId];
+      const session = runHistory.find((entry) => entry.id === sessionId);
+      if (!archive) throw new Error(`No run log archive exists for session ${sessionId}`);
+      if (archive.status === "removed") {
+        throw new Error(
+          `The run log archive for session ${sessionId} was removed (${archive.reason ?? "unknown"})`,
+        );
+      }
+
+      const ends = recordEnds(archive.records);
+      const fileLength = ends.at(-1) ?? 0;
+      const cursor = beforeOffset ?? fileLength;
+      if (beforeOffset != null && !ends.includes(beforeOffset)) {
+        throw new Error(`Offset ${beforeOffset} is not a record boundary of this archive`);
+      }
+      const limit = Math.min(Math.max(maxLines ?? mockPageRecords, 1), 2_000);
+      const endIndex = ends.filter((end) => end <= cursor).length;
+      const startIndex = Math.max(endIndex - limit, 0);
+      const page: RunLogArchivePage = {
+        sessionId,
+        status: archive.status,
+        reason: archive.reason,
+        lineCount: archive.records.length,
+        byteSize: fileLength,
+        droppedLines: archive.droppedLines,
+        droppedBytes: archive.droppedBytes,
+        startedAt: session?.startedAt ?? fixedNow,
+        endedAt: session?.endedAt ?? null,
+        records: clone(archive.records.slice(startIndex, endIndex)),
+        fileLength,
+        pageStartOffset: startIndex === 0 ? 0 : ends[startIndex - 1],
+        hasMoreBefore: startIndex > 0,
+        stoppedBy: startIndex === 0 ? "start" : "lines",
+        incompleteTailSkipped: false,
+        malformedLines: 0,
+      };
+      return page;
+    },
+    async deleteRunLogArchive(sessionId) {
+      const archive = archives[sessionId];
+      if (!archive) throw new Error(`No run log archive exists for session ${sessionId}`);
+      if (archive.status === "writing") {
+        throw new Error(
+          `Session ${sessionId} is still being archived; stop the run before deleting it`,
+        );
+      }
+      archives[sessionId] = { ...archive, status: "removed", reason: "user-deleted", records: [] };
+      // The counters stay and `endedAt` becomes the removal time, the way the real
+      // index does it: "42 lines, deleted" tells the user what they gave up, while
+      // zeroing them would read as a run that printed nothing.
+      runHistory = runHistory.map((session) =>
+        session.id === sessionId && session.archive
+          ? {
+            ...session,
+            archive: {
+              ...session.archive,
+              status: "removed",
+              reason: "user-deleted",
+              endedAt: fixedNow,
+            },
+          }
+          : session,
+      );
+    },
     async openPort() {},
     async openProjectDirectory() {},
     async shutdownApp() {},
@@ -469,6 +702,11 @@ export function createMockApi(): MockRunCoveApi {
     async onRunLog(handler) {
       logHandlers.add(handler);
       return () => logHandlers.delete(handler);
+    },
+    // The mock closes an archive synchronously with the run, so there is nothing left
+    // to announce; the listener exists so the real event has a mock counterpart.
+    async onArchiveClosed() {
+      return () => {};
     },
     async onPortSnapshot() {
       return () => {};

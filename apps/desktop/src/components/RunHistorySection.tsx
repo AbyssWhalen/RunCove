@@ -1,4 +1,4 @@
-import { History, LocateFixed } from "lucide-react";
+import { FileClock, History, LocateFixed, Trash2 } from "lucide-react";
 import { useMemo } from "react";
 
 import { useI18n } from "../i18n";
@@ -8,6 +8,7 @@ import type {
   RunSessionStatus,
 } from "../types";
 import { IconButton } from "./IconButton";
+import { type ArchiveBadge, canDeleteArchive, canViewArchive } from "./archive";
 import {
   formatRunDuration,
   prepareRunHistory,
@@ -34,10 +35,17 @@ export interface RunHistoryLabels {
   endedAt: string;
   duration: string;
   exitCode: string;
+  archive: string;
   actions: string;
   statusLabels: Record<RunSessionStatus, string>;
   projectDeleted: string;
   locate: (project: string, profile: string) => string;
+  // A row's archive copy depends on that row's counters, so the caller supplies a
+  // function rather than a string. It stays on the labels bag because the table is
+  // rendered in tests that provide no translator.
+  archiveBadge: (session: RunSession) => ArchiveBadge;
+  archiveView: (profile: string) => string;
+  archiveDelete: (profile: string) => string;
   loading: string;
   empty: string;
   noMatches: string;
@@ -55,6 +63,8 @@ interface RunHistorySectionProps {
   labels: RunHistoryLabels;
   onRetry: () => void;
   onLocate: (projectId: string, profileId: string) => void;
+  onViewArchive: (session: RunSession) => void;
+  onDeleteArchive: (session: RunSession) => void;
   onOpenAll: () => void;
 }
 
@@ -74,14 +84,27 @@ function SessionStatus({
   );
 }
 
+function ArchiveCell({ badge }: { badge: ArchiveBadge }) {
+  if (badge.state === "none") return <span className="muted">{badge.text}</span>;
+  return (
+    <span className={`status-badge archive-badge archive-badge--${badge.state}`} title={badge.detail}>
+      {badge.text}
+    </span>
+  );
+}
+
 export function RunHistoryTable({
   entries,
   labels,
   onLocate,
+  onViewArchive,
+  onDeleteArchive,
 }: {
   entries: ResolvedRunSession[];
   labels: RunHistoryLabels;
   onLocate: (projectId: string, profileId: string) => void;
+  onViewArchive: (session: RunSession) => void;
+  onDeleteArchive: (session: RunSession) => void;
 }) {
   const { formatDateTime, locale } = useI18n();
   const dateOptions: Intl.DateTimeFormatOptions = {
@@ -105,16 +128,20 @@ export function RunHistoryTable({
             <th>{labels.endedAt}</th>
             <th>{labels.duration}</th>
             <th>{labels.exitCode}</th>
+            <th>{labels.archive}</th>
             <th className="actions-column">{labels.actions}</th>
           </tr>
         </thead>
         <tbody>
-          {entries.map(({ session, status, project, profile }) => (
+          {entries.map(({ session, status, project, profile }) => {
+            const badge = labels.archiveBadge(session);
+            const profileName = profile?.name ?? session.profileName;
+            return (
             <tr key={session.id}>
               <td title={project?.name ?? labels.projectDeleted}>
                 {project?.name ?? <span className="muted">{labels.projectDeleted}</span>}
               </td>
-              <td title={profile?.name ?? session.profileName}>{profile?.name ?? session.profileName}</td>
+              <td title={profileName}>{profileName}</td>
               <td><SessionStatus status={status} labels={labels} /></td>
               <td className="mono-cell">{session.pid ?? <span className="muted">{labels.unavailable}</span>}</td>
               <td><time dateTime={new Date(session.startedAt).toISOString()}>{formatDateTime(session.startedAt, dateOptions)}</time></td>
@@ -125,10 +152,26 @@ export function RunHistoryTable({
               </td>
               <td>{formatRunDuration(session, locale)}</td>
               <td className="mono-cell">{session.exitCode ?? <span className="muted">{labels.unavailable}</span>}</td>
+              <td><ArchiveCell badge={badge} /></td>
               <td>
                 <div className="row-actions">
                   <IconButton
-                    label={labels.locate(project?.name ?? labels.projectDeleted, profile?.name ?? session.profileName)}
+                    label={labels.archiveView(profileName)}
+                    onClick={() => onViewArchive(session)}
+                    disabled={!canViewArchive(badge.state)}
+                  >
+                    <FileClock size={15} />
+                  </IconButton>
+                  <IconButton
+                    label={labels.archiveDelete(profileName)}
+                    tone="danger"
+                    onClick={() => onDeleteArchive(session)}
+                    disabled={!canDeleteArchive(badge.state)}
+                  >
+                    <Trash2 size={15} />
+                  </IconButton>
+                  <IconButton
+                    label={labels.locate(project?.name ?? labels.projectDeleted, profileName)}
                     onClick={() => project && profile && onLocate(project.id, profile.id)}
                     disabled={!project || !profile}
                   >
@@ -137,7 +180,8 @@ export function RunHistoryTable({
                 </div>
               </td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -152,6 +196,8 @@ export function RunHistorySection({
   labels,
   onRetry,
   onLocate,
+  onViewArchive,
+  onDeleteArchive,
   onOpenAll,
 }: RunHistorySectionProps) {
   const entries = useMemo(
@@ -180,7 +226,13 @@ export function RunHistorySection({
       {!error && loading && <div className="empty-state" aria-live="polite">{labels.loading}</div>}
       {!error && !loading && entries.length === 0 && <div className="empty-state">{labels.empty}</div>}
       {!error && !loading && entries.length > 0 && (
-        <RunHistoryTable entries={entries} labels={labels} onLocate={onLocate} />
+        <RunHistoryTable
+          entries={entries}
+          labels={labels}
+          onLocate={onLocate}
+          onViewArchive={onViewArchive}
+          onDeleteArchive={onDeleteArchive}
+        />
       )}
     </section>
   );

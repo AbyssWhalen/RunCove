@@ -6,6 +6,7 @@ import { createMockApi } from "./mock-data";
 import { initialPreference, renderMessage, resolveLanguage } from "./i18n/context";
 import type {
   AppSettings,
+  ArchiveClosedEvent,
   ConfirmAssociationRequest,
   DashboardSnapshot,
   DiscoveredProject,
@@ -14,6 +15,8 @@ import type {
   ProjectInput,
   RestoreResult,
   RunCoveApi,
+  RunLogArchivePage,
+  RunLogArchiveState,
   RunLogEvent,
   RunSession,
   RunStatusEvent,
@@ -42,6 +45,18 @@ const tauriApi: RunCoveApi = {
   clearLogs: (profileId) => invoke<void>("clear_logs", { profileId }),
   getLogs: (profileId) => invoke<RunLogEvent[]>("get_logs", { profileId }),
   getRunHistory: () => invoke<RunSession[]>("get_run_history"),
+  setRunLogArchiving: (enabled) =>
+    invoke<RunLogArchiveState>("set_run_log_archiving", { enabled }),
+  // `null` rather than `undefined`: an omitted key and an explicit null both read
+  // back as `None`, but only null survives the JSON boundary unambiguously.
+  readRunLogArchive: (sessionId, beforeOffset, maxLines) =>
+    invoke<RunLogArchivePage>("read_run_log_archive", {
+      sessionId,
+      beforeOffset: beforeOffset ?? null,
+      maxLines: maxLines ?? null,
+    }),
+  deleteRunLogArchive: (sessionId) =>
+    invoke<void>("delete_run_log_archive", { sessionId }),
   openPort: (port, protocol) => invoke<void>("open_port", { port, protocol }),
   openProjectDirectory: (projectId) =>
     invoke<void>("open_project_directory", { projectId }),
@@ -61,6 +76,9 @@ const tauriApi: RunCoveApi = {
   },
   async onRunLog(handler) {
     return listen<RunLogEvent>("run-log", (event) => handler(event.payload));
+  },
+  async onArchiveClosed(handler) {
+    return listen<ArchiveClosedEvent>("run-archive-closed", (event) => handler(event.payload));
   },
   async onPortSnapshot(handler) {
     return listen<DashboardSnapshot>("port-snapshot", (event) => handler(event.payload));

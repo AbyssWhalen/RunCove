@@ -2,7 +2,13 @@ import { ArrowDownToLine, Check, Copy, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useI18n } from "../i18n";
-import type { LaunchProfile, Project, RunCoveApi, RunLogEvent } from "../types";
+import type {
+  LaunchProfile,
+  Project,
+  RunCoveApi,
+  RunLogArchiveState,
+  RunLogEvent,
+} from "../types";
 import { IconButton } from "./IconButton";
 import { StatusBadge } from "./StatusBadge";
 import { useDialogFocus } from "./useDialogFocus";
@@ -14,6 +20,9 @@ interface LogDrawerProps {
   profile: LaunchProfile;
   project: Project;
   capacity: number;
+  archive: RunLogArchiveState;
+  /** Resolves with the state the backend ended up in, which may differ from the request. */
+  onToggleArchive: (enabled: boolean) => Promise<RunLogArchiveState>;
   onClose: () => void;
 }
 
@@ -43,7 +52,15 @@ function mergeLogs(history: RunLogEvent[], live: RunLogEvent[], capacity: number
   ].slice(-capacity);
 }
 
-export function LogDrawer({ api, profile, project, capacity, onClose }: LogDrawerProps) {
+export function LogDrawer({
+  api,
+  profile,
+  project,
+  capacity,
+  archive,
+  onToggleArchive,
+  onClose,
+}: LogDrawerProps) {
   const { t, formatTime } = useI18n();
   const [logs, setLogs] = useState<RunLogEvent[]>([]);
   const [filter, setFilter] = useState<StreamFilter>("all");
@@ -53,6 +70,9 @@ export function LogDrawer({ api, profile, project, capacity, onClose }: LogDrawe
   const [clearing, setClearing] = useState(false);
   const [copying, setCopying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [archiveNotice, setArchiveNotice] = useState<string | null>(null);
   const [retryVersion, setRetryVersion] = useState(0);
   const endRef = useRef<HTMLDivElement>(null);
   const { dialogRef, onDialogKeyDown } = useDialogFocus(onClose, clearing);
@@ -140,6 +160,23 @@ export function LogDrawer({ api, profile, project, capacity, onClose }: LogDrawe
     }
   };
 
+  const toggleArchive = async (enabled: boolean) => {
+    setArchiveBusy(true);
+    setArchiveError(null);
+    setArchiveNotice(null);
+    try {
+      const next = await onToggleArchive(enabled);
+      // Turning it on while the archive cannot start says nothing reassuring: the
+      // unavailable warning below is the honest report in that case.
+      if (next.enabled && next.available) setArchiveNotice(t("archive.enabledNotice"));
+      else if (!enabled) setArchiveNotice(t("archive.disabledNotice"));
+    } catch (reason) {
+      setArchiveError(t("archive.toggleFailed", { detail: describeError(reason) }));
+    } finally {
+      setArchiveBusy(false);
+    }
+  };
+
   return (
     <div className="drawer-backdrop" role="presentation" onMouseDown={clearing ? undefined : onClose}>
       <aside
@@ -188,6 +225,34 @@ export function LogDrawer({ api, profile, project, capacity, onClose }: LogDrawe
               <Trash2 size={15} />
             </IconButton>
           </div>
+        </div>
+        <div className="archive-toggle">
+          <label className="archive-toggle-control">
+            <input
+              type="checkbox"
+              checked={archive.enabled}
+              disabled={archiveBusy}
+              aria-describedby="archive-toggle-hint"
+              onChange={(event) => void toggleArchive(event.target.checked)}
+            />
+            <span>{archiveBusy ? t("action.working") : t("archive.toggleLabel")}</span>
+          </label>
+          <p className="archive-toggle-hint" id="archive-toggle-hint">{t("archive.toggleHint")}</p>
+          {!archive.available && (
+            <p className="archive-toggle-status archive-toggle-status--warning" role="alert">
+              {archive.unavailableReason
+                ? t("archive.unavailable", { detail: archive.unavailableReason })
+                : t("archive.unavailableGeneric")}
+            </p>
+          )}
+          {archiveError && (
+            <p className="archive-toggle-status archive-toggle-status--warning" role="alert">
+              {archiveError}
+            </p>
+          )}
+          {archiveNotice && (
+            <p className="archive-toggle-status" role="status">{archiveNotice}</p>
+          )}
         </div>
         {error && (
           <div className="drawer-error" role="alert">

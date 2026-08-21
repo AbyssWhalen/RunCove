@@ -10,7 +10,14 @@ const snapshot: DashboardSnapshot = {
   generatedAt: 1,
   scanError: null,
   privilege: { elevated: false, elevationAvailable: true, monitorOnly: false },
-  settings: { pollIntervalMs: 2_000, logCapacity: 500, languagePreference: "en", closeBehavior: "ask" },
+  settings: {
+    pollIntervalMs: 2_000,
+    logCapacity: 500,
+    languagePreference: "en",
+    closeBehavior: "ask",
+    archiveRunLogs: false,
+  },
+  runLogArchive: { enabled: false, available: true, unavailableReason: null },
   restoreSet: { profileIds: [] },
   projects: [],
   ports: [{

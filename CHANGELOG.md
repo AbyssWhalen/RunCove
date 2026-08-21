@@ -2,6 +2,51 @@
 
 All notable user-facing changes to RunCove are documented in this file.
 
+## [0.3.0] - 2026-08-21
+
+### Added
+
+- An opt-in run log archive, off by default, that writes one bounded JSON Lines
+  file per newly started managed session without blocking the child process.
+- Archive status and counters in run history, including archiving, finalizing,
+  complete, partial, removed, dropped-line, and dropped-byte states.
+- A tail-first paged archive viewer and confirmed archive deletion that keeps
+  the corresponding run-history record.
+
+### Reliability And Storage
+
+- A bounded background queue records output loss explicitly instead of slowing
+  a child process. Recoverable loss is represented by gap records, while every
+  dropped line and byte remains visible in the archive index.
+- Per-session archives are limited to 10 MiB and the archive directory to
+  200 MiB. Finished archives are reclaimed oldest-first; open archives are
+  never selected for eviction.
+- Startup recovery repairs interrupted archive rows, accounts for files already
+  on disk, removes only recognized orphan archive files, and refuses links,
+  reparse points, invalid file names, and paths outside the archive directory.
+- Archive reads run off the Tauri IPC thread, page backwards under both record
+  and byte limits, and tolerate an incomplete final record after a crash.
+
+### Data And Privacy Boundaries
+
+- The desktop database migrates from schema version 1 to version 2 by adding an
+  archive index. The migration is transactional, but successful migration is a
+  one-way step: v0.2.1 cannot open the resulting version 2 database.
+- Archiving writes only inside RunCove's application-local data directory and
+  uploads nothing. Archived stdout and stderr are not filtered and may contain
+  credentials, tokens, personal data, or other sensitive service output.
+- Turning archiving on never backfills a running session. Turning it off or
+  quitting finishes archives already open and leaves normal in-memory logging,
+  port scanning, and process control available if archive initialization fails.
+
+### Known Limitations
+
+- If the final buffered flush itself fails, an archive's line count may
+  over-report which buffered line reached disk; its byte count is reconciled
+  from the file and normal writes are unaffected.
+- Backend-composed process stop and exit messages remain English when the rest
+  of the interface is set to Simplified Chinese.
+
 ## [0.2.1] - 2026-08-13
 
 ### Added

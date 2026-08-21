@@ -1,5 +1,8 @@
+use crate::archive_service::ArchiveService;
 use crate::error::{invalid, AppResult};
-use crate::models::{LaunchProfile, LogStream, RunLogEvent, RunStatus, RunStatusEvent};
+use crate::models::{
+    ArchiveClosedEvent, LaunchProfile, LogStream, RunLogEvent, RunStatus, RunStatusEvent,
+};
 use crate::state::AppState;
 use crate::storage::now_ms;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -39,10 +42,25 @@ pub struct ProcessManager {
     shutdown_snapshot: Mutex<Option<Vec<String>>>,
     sequence: AtomicU64,
     log_capacity: usize,
+    archive: Arc<ArchiveService>,
 }
 
 impl ProcessManager {
+    /// A manager that does not archive, for tests that only exercise the process
+    /// lifecycle. Production goes through [`ProcessManager::with_archive`], so an
+    /// application build cannot forget the archive by picking the shorter
+    /// constructor.
+    #[cfg(test)]
     pub fn new(log_capacity: usize) -> Self {
+        Self::with_archive(log_capacity, Arc::new(ArchiveService::unconfigured()))
+    }
+
+    /// Build a manager whose run logs are also offered to `archive`.
+    ///
+    /// The unconfigured service that [`ProcessManager::new`] installs accepts the same
+    /// calls and does nothing with them, so every capture path can hand its events over
+    /// unconditionally and no caller has to test whether archiving exists.
+    pub fn with_archive(log_capacity: usize, archive: Arc<ArchiveService>) -> Self {
         Self {
             managed: Arc::new(Mutex::new(HashMap::new())),
             lifecycle_reservations: Arc::new(Mutex::new(LifecycleReservations::default())),
@@ -55,7 +73,12 @@ impl ProcessManager {
             shutdown_snapshot: Mutex::new(None),
             sequence: AtomicU64::new(0),
             log_capacity,
+            archive,
         }
+    }
+
+    pub fn archive(&self) -> &Arc<ArchiveService> {
+        &self.archive
     }
 
     pub fn launch<R: Runtime>(
@@ -122,10 +145,21 @@ impl ProcessManager {
             .lock()
             .expect("unexpected exit mutex poisoned")
             .remove(&profile.id);
+        // Open the archive after the last step that can fail and before the capture
+        // threads exist, so a launch that errors out never leaves a `writing` row and no
+        // record can arrive for a session the archive has not opened. The answer is
+        // decided once, here: a session the archive declined stays unarchived for its
+        // whole life even if the setting is switched on while it runs.
+        let archived_session = self
+            .archive
+            .begin_session(&info.session_id, now_ms())
+            .then(|| info.session_id.clone());
         let log_context = LogCaptureContext {
             profile_id: profile.id.clone(),
+            session_id: archived_session.clone(),
             logs: self.logs.clone(),
             capacity: self.log_capacity,
+            archive: self.archive.clone(),
             app: app.clone(),
         };
 
@@ -152,6 +186,8 @@ impl ProcessManager {
                 logs: self.logs.clone(),
                 capacity: self.log_capacity,
                 restore_sync_suspended: self.restore_sync_suspended.clone(),
+                archive: self.archive.clone(),
+                archived_session,
                 app,
             },
         );
@@ -609,7 +645,13 @@ fn watch_child<R: Runtime>(
                     line: message.clone().unwrap_or_else(|| "Process exited".into()),
                     timestamp: now_ms(),
                 };
-                push_log(&context.logs, context.capacity, log.clone());
+                capture_log(
+                    &context.logs,
+                    context.capacity,
+                    &context.archive,
+                    context.archived_session.as_deref(),
+                    log.clone(),
+                );
                 let _ = context.app.emit("run-log", &log);
                 let _ = context.app.emit(
                     "run-status",
@@ -617,6 +659,25 @@ fn watch_child<R: Runtime>(
                 );
             },
         );
+        // Close the archive only once the managed map's lock is released. Queueing the
+        // exit line above is pure memory, but a close writes the session's remaining
+        // records and syncs the file, and no lifecycle call may wait on that lock while
+        // a disk flush runs. This is unconditional on whether the entry above still
+        // matched: a session the archive never opened, or one the setting already closed,
+        // ignores the call.
+        if let Some(session_id) = &context.archived_session {
+            context.archive.close_session(session_id);
+            // The exit event above already made the frontend reload history, but the row
+            // was still `writing` then, so that reload cannot see the final one. Say the
+            // archive is closed once it is, rather than leaving a finished archive on
+            // screen as "finalizing" until something else refetches.
+            let _ = context.app.emit(
+                "run-archive-closed",
+                ArchiveClosedEvent {
+                    session_id: session_id.clone(),
+                },
+            );
+        }
     });
 }
 
@@ -663,6 +724,9 @@ struct ProcessWatchContext<R: Runtime> {
     logs: Arc<Mutex<HashMap<String, VecDeque<RunLogEvent>>>>,
     capacity: usize,
     restore_sync_suspended: Arc<AtomicBool>,
+    archive: Arc<ArchiveService>,
+    /// The archive session this process owns, or `None` when this run is not archived.
+    archived_session: Option<String>,
     app: AppHandle<R>,
 }
 
@@ -736,8 +800,11 @@ enum ExitIntent {
 
 struct LogCaptureContext<R: Runtime> {
     profile_id: String,
+    /// The archive session these lines belong to, or `None` when this run is not archived.
+    session_id: Option<String>,
     logs: Arc<Mutex<HashMap<String, VecDeque<RunLogEvent>>>>,
     capacity: usize,
+    archive: Arc<ArchiveService>,
     app: AppHandle<R>,
 }
 
@@ -745,8 +812,10 @@ impl<R: Runtime> Clone for LogCaptureContext<R> {
     fn clone(&self) -> Self {
         Self {
             profile_id: self.profile_id.clone(),
+            session_id: self.session_id.clone(),
             logs: self.logs.clone(),
             capacity: self.capacity,
+            archive: self.archive.clone(),
             app: self.app.clone(),
         }
     }
@@ -774,7 +843,13 @@ fn capture_stream<S: Read + Send + 'static, R: Runtime>(
                             line: format!("[log read error: {error}]"),
                             timestamp: now_ms(),
                         };
-                        push_log(&context.logs, context.capacity, event.clone());
+                        capture_log(
+                            &context.logs,
+                            context.capacity,
+                            &context.archive,
+                            context.session_id.as_deref(),
+                            event.clone(),
+                        );
                         let _ = context.app.emit("run-log", &event);
                         return;
                     }
@@ -805,7 +880,13 @@ fn capture_stream<S: Read + Send + 'static, R: Runtime>(
                 line,
                 timestamp: now_ms(),
             };
-            push_log(&context.logs, context.capacity, event.clone());
+            capture_log(
+                &context.logs,
+                context.capacity,
+                &context.archive,
+                context.session_id.as_deref(),
+                event.clone(),
+            );
             let _ = context.app.emit("run-log", &event);
         }
     })
@@ -826,6 +907,25 @@ fn render_log_line(bytes: &[u8], truncated: bool) -> String {
     line.push_str(&decoded[..prefix_end]);
     line.push_str(LOG_LINE_TRUNCATED_MARKER);
     line
+}
+
+/// Keep one log line in memory and, when this run is archived, on disk as well.
+///
+/// Every production line goes through here, so the drawer and the archive cannot drift:
+/// they see the same event, including the truncation marker and the timestamp. The
+/// archive is offered the line first because `push_log` takes ownership of it, and the
+/// offer never touches a file — `ArchiveService::record` only queues.
+fn capture_log(
+    logs: &Mutex<HashMap<String, VecDeque<RunLogEvent>>>,
+    capacity: usize,
+    archive: &ArchiveService,
+    session_id: Option<&str>,
+    event: RunLogEvent,
+) {
+    if let Some(session_id) = session_id {
+        archive.record(session_id, &event);
+    }
+    push_log(logs, capacity, event);
 }
 
 fn push_log(
@@ -1026,6 +1126,22 @@ impl OwnedProcessTree {
 mod tests {
     use super::*;
 
+    /// A capture context that keeps its lines in memory only, which is what every
+    /// test here needs: `capture_log`'s archive side has its own test below.
+    fn memory_capture_context<R: Runtime>(
+        logs: &Arc<Mutex<HashMap<String, VecDeque<RunLogEvent>>>>,
+        app: &AppHandle<R>,
+    ) -> LogCaptureContext<R> {
+        LogCaptureContext {
+            profile_id: "profile".into(),
+            session_id: None,
+            logs: logs.clone(),
+            capacity: 10,
+            archive: Arc::new(ArchiveService::unconfigured()),
+            app: app.clone(),
+        }
+    }
+
     #[test]
     fn descendant_walk_handles_chains_and_cycles() {
         let parents = HashMap::from([(30, 20), (20, 10), (50, 60), (60, 50)]);
@@ -1061,12 +1177,7 @@ mod tests {
         let capture = capture_stream(
             std::io::Cursor::new(vec![b'x'; EXPECTED_LINE_LIMIT * 4]),
             LogStream::Stdout,
-            LogCaptureContext {
-                profile_id: "profile".into(),
-                logs: logs.clone(),
-                capacity: 10,
-                app: app.handle().clone(),
-            },
+            memory_capture_context(&logs, app.handle()),
         );
 
         capture.join().unwrap();
@@ -1083,17 +1194,113 @@ mod tests {
         let capture = capture_stream(
             std::io::Cursor::new(b"tail without newline"),
             LogStream::Stderr,
-            LogCaptureContext {
-                profile_id: "profile".into(),
-                logs: logs.clone(),
-                capacity: 10,
-                app: app.handle().clone(),
-            },
+            memory_capture_context(&logs, app.handle()),
         );
 
         capture.join().unwrap();
         let logs = logs.lock().unwrap();
         assert_eq!(logs["profile"][0].line, "tail without newline");
+    }
+
+    /// A control test for the archive's drop accounting: an empty line is a real
+    /// captured event, so a dropped record can cost one line and zero bytes. The
+    /// version 2 `run_log_archives` CHECK that ties the two drop counters
+    /// together assumes this cannot happen.
+    #[test]
+    fn a_lone_newline_is_captured_as_one_empty_log_line() {
+        let app = tauri::test::mock_app();
+        let logs = Arc::new(Mutex::new(HashMap::new()));
+        let capture = capture_stream(
+            std::io::Cursor::new(b"\n"),
+            LogStream::Stdout,
+            memory_capture_context(&logs, app.handle()),
+        );
+
+        capture.join().unwrap();
+        let lines: Vec<String> = logs.lock().unwrap()["profile"]
+            .iter()
+            .map(|event| event.line.clone())
+            .collect();
+        assert_eq!(lines, [""], "a lone newline is one event carrying no text");
+
+        // And it is not an artifact of a stream that holds nothing else: a blank
+        // line between two others survives as its own empty event.
+        let logs = Arc::new(Mutex::new(HashMap::new()));
+        let capture = capture_stream(
+            std::io::Cursor::new(b"a\n\nb\n"),
+            LogStream::Stdout,
+            memory_capture_context(&logs, app.handle()),
+        );
+
+        capture.join().unwrap();
+        let lines: Vec<String> = logs.lock().unwrap()["profile"]
+            .iter()
+            .map(|event| event.line.clone())
+            .collect();
+        assert_eq!(lines, ["a", "", "b"]);
+    }
+
+    /// The one production path that feeds both copies of a run log must feed both:
+    /// the drawer's bounded memory and, when the session is archived, the file. A
+    /// line that reaches one and not the other is the drift this test exists to
+    /// catch, so it compares the archived record against the event that was pushed.
+    #[test]
+    fn a_captured_line_reaches_memory_and_the_archive_together() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage =
+            Arc::new(crate::storage::Storage::open(&temp.path().join("runcove.sqlite3")).unwrap());
+        // An archive row belongs to a run session, and a run session belongs to a
+        // launch profile, so the fixture seeds the real chain rather than a bare id.
+        let project = storage
+            .save_project(crate::models::ProjectInput {
+                id: None,
+                name: "archive fixture".into(),
+                path: temp.path().to_string_lossy().into_owned(),
+                profiles: vec![crate::models::LaunchProfileInput {
+                    id: None,
+                    name: "dev".into(),
+                    program: "npm.cmd".into(),
+                    args: vec!["run".into(), "dev".into()],
+                    cwd: temp.path().to_string_lossy().into_owned(),
+                    expected_ports: Vec::new(),
+                }],
+            })
+            .unwrap();
+        let session_id = storage
+            .begin_session(&project.profiles[0].id, "dev")
+            .unwrap();
+        let archive = ArchiveService::new(
+            temp.path(),
+            storage.clone(),
+            true,
+            Arc::new(|message| panic!("the archive reported: {message}")),
+        );
+        assert!(archive.begin_session(&session_id, now_ms()));
+        let logs = Arc::new(Mutex::new(HashMap::new()));
+        let event = RunLogEvent {
+            profile_id: "profile".into(),
+            stream: LogStream::Stderr,
+            line: "served on 3100".into(),
+            timestamp: now_ms(),
+        };
+
+        capture_log(&logs, 10, &archive, Some(&session_id), event.clone());
+        archive.close_session(&session_id);
+
+        assert_eq!(logs.lock().unwrap()["profile"][0], event);
+        let page = archive.read_page(&session_id, None, None).unwrap();
+        let archived = &page.records[0];
+        assert_eq!(page.records.len(), 1);
+        assert_eq!(archived.line, event.line);
+        assert_eq!(archived.stream, event.stream);
+        assert_eq!(archived.timestamp, event.timestamp);
+        // An unarchived session takes the same call and writes nothing to disk.
+        capture_log(&logs, 10, &archive, None, event.clone());
+        assert_eq!(logs.lock().unwrap()["profile"].len(), 2);
+        assert_eq!(
+            archive.read_page(&session_id, None, None).unwrap().records,
+            page.records
+        );
     }
 
     #[test]

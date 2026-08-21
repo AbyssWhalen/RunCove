@@ -130,6 +130,7 @@ impl AppState {
             privilege: crate::privileges::current_status()?,
             generated_at: now_ms(),
             scan_error,
+            run_log_archive: self.processes.archive().state(),
         })
     }
 }

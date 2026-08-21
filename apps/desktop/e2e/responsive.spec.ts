@@ -95,7 +95,7 @@ for (const viewport of viewports) {
     await expect(chineseHelpDialog.getByRole("heading", { name: "看懂端口页面" })).toBeVisible();
     await chineseHelpDialog.getByRole("tab", { name: "运行历史" }).click();
     await expect(chineseHelpDialog.getByRole("heading", { name: "看懂运行历史" })).toBeVisible();
-    await expect(chineseHelpDialog.getByRole("heading", { name: "不会保存历史日志" })).toBeVisible();
+    await expect(chineseHelpDialog.getByRole("heading", { name: "归档历史日志是可选的" })).toBeVisible();
     await expectInsideViewport(page, chineseHelpDialog);
     await expectNoHorizontalOverflow(page);
     await chineseHelpDialog.getByRole("button", { name: "关闭", exact: true }).click();
@@ -114,6 +114,24 @@ for (const viewport of viewports) {
     await historyDialog.getByRole("button", { name: "Close run history" }).click();
     await expect(historyDialog).not.toBeVisible();
 
+    // The archive viewer is the widest drawer RunCove opens, so the walk proves it
+    // stays inside 900x600 as well as that it opens at the end of the file: the mock
+    // session holds 30 records and one page is 12.
+    await page.getByRole("button", { name: "View archived Web logs" }).click();
+    const archiveDialog = page.getByRole("dialog", { name: "Web" });
+    await expect(archiveDialog).toBeVisible();
+    await expect(archiveDialog).toContainText("12 shown · 30 recorded");
+    await expect(archiveDialog).toContainText("This run is still being archived");
+    // Still being written, so the file cannot be deleted from here.
+    await expect(archiveDialog.getByRole("button", { name: "Delete archived Web logs" })).toHaveCount(0);
+    await expectInsideViewport(page, archiveDialog);
+    await expectNoHorizontalOverflow(page);
+    await archiveDialog.getByRole("button", { name: "Load earlier lines" }).click();
+    await expect(archiveDialog).toContainText("24 shown · 30 recorded");
+    await expectInsideViewport(page, archiveDialog);
+    await archiveDialog.getByRole("button", { name: "Close archived logs" }).click();
+    await expect(archiveDialog).not.toBeVisible();
+
     await page.getByRole("button", { name: "Help and usage guide" }).click();
     const helpDialog = page.getByRole("dialog", { name: "RunCove Help" });
     await expect(helpDialog).toBeVisible();
@@ -125,7 +143,8 @@ for (const viewport of viewports) {
     await expectNoHorizontalOverflow(page);
     await helpDialog.getByRole("tab", { name: "Run history" }).click();
     await expect(helpDialog.getByRole("heading", { name: "Understand run history" })).toBeVisible();
-    await expect(helpDialog).toContainText("Historical logs are not stored");
+    await expect(helpDialog).toContainText("Logs always stay in a bounded memory buffer");
+    await expect(helpDialog).toContainText("Turn on Archive run logs in a log drawer");
     await helpDialog.getByRole("button", { name: "Close", exact: true }).click();
     await expect(helpDialog).not.toBeVisible();
 

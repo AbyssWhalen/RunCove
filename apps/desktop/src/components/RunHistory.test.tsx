@@ -2,7 +2,8 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import type { Project, RunSession } from "../types";
+import type { Project, RunLogArchiveSummary, RunSession } from "../types";
+import { archiveBadgeState } from "./archive";
 import { RunHistoryDrawer } from "./RunHistoryDrawer";
 import {
   formatRunDuration,
@@ -42,6 +43,7 @@ const labels: RunHistoryLabels = {
   endedAt: "Ended",
   duration: "Duration",
   exitCode: "Exit code",
+  archive: "Archive",
   actions: "Actions",
   statusLabels: {
     starting: "Starting",
@@ -52,6 +54,14 @@ const labels: RunHistoryLabels = {
   },
   projectDeleted: "Project deleted",
   locate: (project, profile) => `Locate ${project} ${profile}`,
+  // The real badge copy is pinned in archive.test.ts; these labels keep the state
+  // derivation honest while giving this file stable strings to query by.
+  archiveBadge: (item) => {
+    const state = archiveBadgeState(item);
+    return { state, text: `archive:${state}` };
+  },
+  archiveView: (profile) => `view:${profile}`,
+  archiveDelete: (profile) => `delete:${profile}`,
   loading: "Loading history",
   empty: "No run history",
   noMatches: "No matching sessions",
@@ -96,6 +106,27 @@ function session(
   };
 }
 
+function archiveSummary(
+  overrides: Partial<RunLogArchiveSummary> = {},
+): RunLogArchiveSummary {
+  return {
+    status: "complete",
+    reason: null,
+    lineCount: 12,
+    byteSize: 3_072,
+    droppedLines: 0,
+    droppedBytes: 0,
+    startedAt: 1,
+    endedAt: 2_000,
+    ...overrides,
+  };
+}
+
+/** A session whose profile is gone, so its own `profileName` reaches the buttons. */
+function orphan(id: string, profileName: string, overrides: Partial<RunSession> = {}): RunSession {
+  return session(id, { profileId: "deleted-profile", profileName, ...overrides });
+}
+
 describe("run history helpers", () => {
   it("falls back to unknown for unrecognized persisted statuses", () => {
     expect(normalizeRunSessionStatus("future-status")).toBe("unknown");
@@ -135,6 +166,8 @@ describe("RunHistorySection", () => {
         labels={labels}
         onRetry={vi.fn()}
         onLocate={onLocate}
+        onViewArchive={vi.fn()}
+        onDeleteArchive={vi.fn()}
         onOpenAll={vi.fn()}
       />,
     );
@@ -153,6 +186,8 @@ describe("RunHistorySection", () => {
         labels={labels}
         onRetry={vi.fn()}
         onLocate={vi.fn()}
+        onViewArchive={vi.fn()}
+        onDeleteArchive={vi.fn()}
         onOpenAll={vi.fn()}
       />,
     );
@@ -160,6 +195,53 @@ describe("RunHistorySection", () => {
     expect(screen.getByText("Project deleted")).toBeVisible();
     expect(screen.getByText("Old dev")).toBeVisible();
     expect(screen.getByRole("button", { name: "Locate Project deleted Old dev" })).toBeDisabled();
+  });
+
+  it("offers a finished archive, refuses an open one, and says when there is none", async () => {
+    const user = userEvent.setup();
+    const onViewArchive = vi.fn();
+    const onDeleteArchive = vi.fn();
+    const finished = orphan("1", "Finished", { archive: archiveSummary() });
+    const open = orphan("2", "Open", {
+      status: "running",
+      endedAt: null,
+      exitCode: null,
+      archive: archiveSummary({ status: "writing", endedAt: null }),
+    });
+    const removed = orphan("3", "Removed", {
+      archive: archiveSummary({ status: "removed", reason: "user-deleted" }),
+    });
+    const plain = orphan("4", "Plain");
+    render(
+      <RunHistorySection
+        sessions={[finished, open, removed, plain]}
+        projects={[project]}
+        loading={false}
+        labels={labels}
+        onRetry={vi.fn()}
+        onLocate={vi.fn()}
+        onViewArchive={onViewArchive}
+        onDeleteArchive={onDeleteArchive}
+        onOpenAll={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("columnheader", { name: "Archive" })).toBeVisible();
+    for (const state of ["complete", "writing", "removed", "none"]) {
+      expect(screen.getByText(`archive:${state}`)).toBeVisible();
+    }
+    // An open file can be read but not deleted, a removed one offers neither, and a
+    // session that was never archived has nothing to offer at all.
+    expect(screen.getByRole("button", { name: "view:Open" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "delete:Open" })).toBeDisabled();
+    for (const name of ["view:Removed", "delete:Removed", "view:Plain", "delete:Plain"]) {
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    }
+
+    await user.click(screen.getByRole("button", { name: "view:Finished" }));
+    await user.click(screen.getByRole("button", { name: "delete:Finished" }));
+    expect(onViewArchive).toHaveBeenCalledWith(finished);
+    expect(onDeleteArchive).toHaveBeenCalledWith(finished);
   });
 
   it("renders a retryable failure instead of stale rows", async () => {
@@ -174,6 +256,8 @@ describe("RunHistorySection", () => {
         labels={labels}
         onRetry={onRetry}
         onLocate={vi.fn()}
+        onViewArchive={vi.fn()}
+        onDeleteArchive={vi.fn()}
         onOpenAll={vi.fn()}
       />,
     );
@@ -199,6 +283,8 @@ describe("RunHistoryDrawer", () => {
         labels={labels}
         onRetry={vi.fn()}
         onLocate={vi.fn()}
+        onViewArchive={vi.fn()}
+        onDeleteArchive={vi.fn()}
         onClose={vi.fn()}
       />,
     );
@@ -216,6 +302,33 @@ describe("RunHistoryDrawer", () => {
     expect(within(dialog).getByText("No matching sessions")).toBeVisible();
   });
 
+  it("forwards the archive actions of the rows it renders", async () => {
+    const user = userEvent.setup();
+    const onViewArchive = vi.fn();
+    const onDeleteArchive = vi.fn();
+    const archived = orphan("1", "Archived", { archive: archiveSummary() });
+    render(
+      <RunHistoryDrawer
+        sessions={[archived]}
+        projects={[project]}
+        loading={false}
+        labels={labels}
+        onRetry={vi.fn()}
+        onLocate={vi.fn()}
+        onViewArchive={onViewArchive}
+        onDeleteArchive={onDeleteArchive}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Run history" });
+    expect(within(dialog).getByText("archive:complete")).toBeVisible();
+    await user.click(within(dialog).getByRole("button", { name: "view:Archived" }));
+    await user.click(within(dialog).getByRole("button", { name: "delete:Archived" }));
+    expect(onViewArchive).toHaveBeenCalledWith(archived);
+    expect(onDeleteArchive).toHaveBeenCalledWith(archived);
+  });
+
   it("closes on Escape and restores focus to the opening control", () => {
     const trigger = document.createElement("button");
     trigger.textContent = "Open history";
@@ -230,6 +343,8 @@ describe("RunHistoryDrawer", () => {
         labels={labels}
         onRetry={vi.fn()}
         onLocate={vi.fn()}
+        onViewArchive={vi.fn()}
+        onDeleteArchive={vi.fn()}
         onClose={onClose}
       />,
     );

@@ -3,7 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { I18nProvider } from "../i18n";
-import type { LaunchProfile, Project, RunCoveApi, RunLogEvent } from "../types";
+import type {
+  LaunchProfile,
+  Project,
+  RunCoveApi,
+  RunLogArchiveState,
+  RunLogEvent,
+} from "../types";
 import { LogDrawer } from "./LogDrawer";
 
 const profile: LaunchProfile = {
@@ -43,6 +49,14 @@ function logApi(overrides: Partial<RunCoveApi>): RunCoveApi {
   } as unknown as RunCoveApi;
 }
 
+const archiveOff: RunLogArchiveState = { enabled: false, available: true, unavailableReason: null };
+
+/** The archive is off and healthy unless a test says otherwise. */
+const archiveProps = {
+  archive: archiveOff,
+  onToggleArchive: async (enabled: boolean) => ({ ...archiveOff, enabled }),
+};
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((complete) => {
@@ -54,7 +68,7 @@ function deferred<T>() {
 describe("LogDrawer failures", () => {
   it("leaves loading state and offers a retry when log loading fails", async () => {
     const getLogs = vi.fn().mockRejectedValue(new Error("IPC unavailable"));
-    render(<LogDrawer api={logApi({ getLogs })} profile={profile} project={project} capacity={100} onClose={vi.fn()} />);
+    render(<LogDrawer api={logApi({ getLogs })} profile={profile} project={project} capacity={100} {...archiveProps} onClose={vi.fn()} />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Logs could not be loaded: IPC unavailable");
     expect(screen.queryByText("Loading logs...")).not.toBeInTheDocument();
@@ -71,6 +85,7 @@ describe("LogDrawer failures", () => {
         profile={profile}
         project={project}
         capacity={100}
+        {...archiveProps}
         onClose={vi.fn()}
       />,
     );
@@ -96,6 +111,7 @@ describe("LogDrawer failures", () => {
         profile={profile}
         project={project}
         capacity={100}
+        {...archiveProps}
         onClose={vi.fn()}
       />,
     );
@@ -128,6 +144,7 @@ describe("LogDrawer failures", () => {
         profile={profile}
         project={project}
         capacity={100}
+        {...archiveProps}
         onClose={vi.fn()}
       />,
     );
@@ -159,6 +176,7 @@ describe("LogDrawer failures", () => {
         profile={profile}
         project={project}
         capacity={100}
+        {...archiveProps}
         onClose={vi.fn()}
       />,
     );
@@ -184,6 +202,7 @@ describe("LogDrawer failures", () => {
         profile={profile}
         project={project}
         capacity={100}
+        {...archiveProps}
         onClose={vi.fn()}
       />,
     );
@@ -209,6 +228,7 @@ describe("LogDrawer failures", () => {
         profile={profile}
         project={project}
         capacity={100}
+        {...archiveProps}
         onClose={vi.fn()}
       />,
     );
@@ -234,6 +254,7 @@ describe("LogDrawer failures", () => {
             profile={profile}
             project={project}
             capacity={100}
+            {...archiveProps}
             onClose={vi.fn()}
           />
         </I18nProvider>,
@@ -248,5 +269,116 @@ describe("LogDrawer failures", () => {
     } finally {
       Object.defineProperty(navigator, "clipboard", { configurable: true, value: clipboard });
     }
+  });
+});
+
+describe("LogDrawer run log archiving", () => {
+  const archiveOn: RunLogArchiveState = { enabled: true, available: true, unavailableReason: null };
+
+  function renderDrawer(
+    archive: RunLogArchiveState,
+    onToggleArchive: (enabled: boolean) => Promise<RunLogArchiveState>,
+  ) {
+    return render(
+      <LogDrawer
+        api={logApi({})}
+        profile={profile}
+        project={project}
+        capacity={100}
+        archive={archive}
+        onToggleArchive={onToggleArchive}
+        onClose={vi.fn()}
+      />,
+    );
+  }
+
+  it("warns about the files it writes before anything is enabled", () => {
+    renderDrawer(archiveOff, vi.fn());
+
+    const toggle = screen.getByRole("checkbox", { name: "Archive run logs" });
+    expect(toggle).not.toBeChecked();
+    expect(screen.getByText(/can contain tokens your own services print/)).toBeInTheDocument();
+    // The hint is what the checkbox points at, so a screen reader hears the warning
+    // with the control rather than only on the way past it.
+    expect(toggle).toHaveAccessibleDescription(/can contain tokens your own services print/);
+  });
+
+  it("promises nothing when enabling produced an archive that cannot run", async () => {
+    const onToggleArchive = vi.fn().mockResolvedValue({
+      enabled: true,
+      available: false,
+      unavailableReason: "the data folder is read-only",
+    });
+    renderDrawer(archiveOff, onToggleArchive);
+
+    await userEvent.click(screen.getByRole("checkbox", { name: "Archive run logs" }));
+
+    expect(onToggleArchive).toHaveBeenCalledWith(true);
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Archive run logs" })).toBeEnabled());
+    expect(screen.queryByText("Runs started from now on will be archived.")).not.toBeInTheDocument();
+  });
+
+  it("confirms an enabled archive only when the backend says it is running", async () => {
+    const onToggleArchive = vi.fn().mockResolvedValue(archiveOn);
+    renderDrawer(archiveOff, onToggleArchive);
+
+    await userEvent.click(screen.getByRole("checkbox", { name: "Archive run logs" }));
+
+    expect(await screen.findByText("Runs started from now on will be archived.")).toBeInTheDocument();
+  });
+
+  it("says that disabling leaves open archives to finish", async () => {
+    const onToggleArchive = vi.fn().mockResolvedValue(archiveOff);
+    renderDrawer(archiveOn, onToggleArchive);
+
+    const toggle = screen.getByRole("checkbox", { name: "Archive run logs" });
+    expect(toggle).toBeChecked();
+    await userEvent.click(toggle);
+
+    expect(onToggleArchive).toHaveBeenCalledWith(false);
+    expect(
+      await screen.findByText("New runs will not be archived. Archives already open are being finished."),
+    ).toBeInTheDocument();
+  });
+
+  it("reports a failed toggle without borrowing the log retry", async () => {
+    const onToggleArchive = vi.fn().mockRejectedValue(new Error("settings are locked"));
+    renderDrawer(archiveOff, onToggleArchive);
+
+    await userEvent.click(screen.getByRole("checkbox", { name: "Archive run logs" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Run log archiving could not be changed: settings are locked",
+    );
+    expect(screen.queryByRole("button", { name: "Retry loading logs" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the toggle usable while the archive is unavailable, because it is the retry", async () => {
+    const onToggleArchive = vi.fn().mockResolvedValue(archiveOff);
+    renderDrawer(
+      { enabled: true, available: false, unavailableReason: "the data folder is read-only" },
+      onToggleArchive,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Run log archiving is unavailable this session: the data folder is read-only",
+    );
+    // Checked is the persisted preference; the alert above is what says nothing is
+    // being captured. Disabling the control would strand the user with a preference
+    // they cannot clear and no way to retry.
+    const toggle = screen.getByRole("checkbox", { name: "Archive run logs" });
+    expect(toggle).toBeChecked();
+    expect(toggle).toBeEnabled();
+
+    await userEvent.click(toggle);
+    expect(onToggleArchive).toHaveBeenCalledWith(false);
+  });
+
+  it("falls back to a generic warning when no reason came back", () => {
+    renderDrawer({ enabled: true, available: false }, vi.fn());
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Run log archiving could not be started this session.",
+    );
   });
 });

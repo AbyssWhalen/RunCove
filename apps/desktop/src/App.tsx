@@ -22,6 +22,9 @@ import { ProjectModal } from "./components/ProjectModal";
 import { ProjectsView } from "./components/ProjectsView";
 import { RunHistoryDrawer } from "./components/RunHistoryDrawer";
 import type { RunHistoryLabels } from "./components/RunHistorySection";
+import { RunLogArchiveDrawer } from "./components/RunLogArchiveDrawer";
+import { describeArchive, formatArchiveSize } from "./components/archive";
+import { resolveRunSession } from "./components/run-history";
 import { I18nProvider, LANGUAGE_STORAGE_KEY, useI18n } from "./i18n";
 import type { LanguagePreference, MessageKey } from "./i18n";
 import { isLanguagePreference } from "./i18n/context";
@@ -91,7 +94,7 @@ function errorMessage(reason: unknown): string {
 }
 
 function AppShell() {
-  const { preference, setPreference, t, formatTime } = useI18n();
+  const { preference, setPreference, t, locale, formatTime } = useI18n();
   const [activeView, setActiveView] = useState<ActiveView>("overview");
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -100,6 +103,11 @@ function AppShell() {
   const [runHistoryLoading, setRunHistoryLoading] = useState(false);
   const [runHistoryError, setRunHistoryError] = useState<string | null>(null);
   const [runHistoryDrawerOpen, setRunHistoryDrawerOpen] = useState(false);
+  // The viewer keeps only the session id: the row it renders comes from `runHistory`,
+  // so a history reload updates the badge instead of leaving a stale copy on screen.
+  const [archiveViewerId, setArchiveViewerId] = useState<string | null>(null);
+  const [archiveToDelete, setArchiveToDelete] = useState<RunSession | null>(null);
+  const [archiveDeleteBusy, setArchiveDeleteBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busyProfileIds, setBusyProfileIds] = useState<Set<string>>(new Set());
@@ -132,6 +140,7 @@ function AppShell() {
   const profileActionsInFlight = useRef(new Set<string>());
   const restoreInFlight = useRef(false);
   const projectDeleteInFlight = useRef(false);
+  const archiveDeleteInFlight = useRef(false);
   const shutdownInFlight = useRef(false);
   const closeChoiceRequested = useRef(false);
   const closeChoiceActionInFlight = useRef(false);
@@ -263,6 +272,29 @@ function AppShell() {
         }
       }
       if (event.status === "exited" || event.unexpected) void loadRunHistory();
+    }).then((dispose) => {
+      if (cancelled) dispose();
+      else unlisten = dispose;
+    }).catch((reason) => {
+      if (!cancelled) {
+        showError(t("error.operationFailed", { detail: errorMessage(reason) }));
+      }
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [loadRunHistory, showError, t]);
+
+  // The exit event's reload above runs while the archive row is still `writing`,
+  // because the writer closes the file after the lock that event is emitted under is
+  // released. Reload again once the close has happened, so a finished archive stops
+  // rendering as "finalizing" without waiting for some other refetch.
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void api.onArchiveClosed(() => {
+      void loadRunHistory();
     }).then((dispose) => {
       if (cancelled) dispose();
       else unlisten = dispose;
@@ -692,6 +724,53 @@ function AppShell() {
     }
   };
 
+  /**
+   * Persists the archive preference and reports the state the backend ended up in.
+   *
+   * Turning it on re-runs initialization, so this doubles as the retry after a failed
+   * session; the drawer renders what comes back rather than what was asked for. It
+   * deliberately does not catch: the caller shows the failure next to the toggle.
+   */
+  const toggleRunLogArchiving = useCallback(async (enabled: boolean) => {
+    const next = await api.setRunLogArchiving(enabled);
+    setSnapshot((current) => current
+      ? {
+        ...current,
+        runLogArchive: next,
+        settings: { ...current.settings, archiveRunLogs: next.enabled },
+      }
+      : current);
+    // Every archive this changed is already final on disk once the command resolves:
+    // turning it off closes the open ones, and turning it on re-runs the sweep that
+    // finishes rows an earlier run left `writing`. Nothing announces them —
+    // `run-archive-closed` is emitted from the process exit path only — so a badge
+    // already on screen would keep claiming `Archiving` for a closed file until
+    // something else refetched. Loading here rather than on the next Overview visit is
+    // why this is gated on history having been loaded at all.
+    if (runHistoryLoaded.current) await loadRunHistory();
+    return next;
+  }, [loadRunHistory]);
+
+  const confirmArchiveDelete = async () => {
+    if (!archiveToDelete || archiveDeleteInFlight.current) return;
+    const session = archiveToDelete;
+    archiveDeleteInFlight.current = true;
+    setArchiveDeleteBusy(true);
+    try {
+      await api.deleteRunLogArchive(session.id);
+      setArchiveToDelete(null);
+      // The file is gone, so a viewer still open on it would be reading nothing.
+      setArchiveViewerId((current) => current === session.id ? null : current);
+      setNotice(t("archive.deleted"));
+      await loadRunHistory();
+    } catch (reason) {
+      showError(t("archive.deleteFailed", { detail: errorMessage(reason) }));
+    } finally {
+      archiveDeleteInFlight.current = false;
+      setArchiveDeleteBusy(false);
+    }
+  };
+
   const runHistoryLabels: RunHistoryLabels = useMemo(() => ({
     recentTitle: t("history.title"),
     recentDescription: t("history.subtitle"),
@@ -716,6 +795,7 @@ function AppShell() {
     endedAt: t("history.ended"),
     duration: t("history.duration"),
     exitCode: t("history.exitCode"),
+    archive: t("history.archive"),
     actions: t("history.actions"),
     statusLabels: {
       starting: t("history.status.starting"),
@@ -726,6 +806,9 @@ function AppShell() {
     },
     projectDeleted: t("history.projectDeleted"),
     locate: (project, profile) => t("history.locateProject", { project, profile }),
+    archiveBadge: (session) => describeArchive(session, t, locale),
+    archiveView: (profile) => t("archive.view", { profile }),
+    archiveDelete: (profile) => t("archive.delete", { profile }),
     loading: t("history.loading"),
     empty: t("history.empty"),
     noMatches: t("history.noMatches"),
@@ -733,7 +816,7 @@ function AppShell() {
     retry: t("history.retry"),
     sessionCount: (count) => t("history.sessionCount", { count }),
     resultCount: (visible, total) => t("history.resultCount", { visible, total }),
-  }), [t]);
+  }), [locale, t]);
 
   const locateRunHistory = useCallback((projectId: string, profileId: string) => {
     setActiveView("projects");
@@ -758,6 +841,14 @@ function AppShell() {
     const profile = project?.profiles.find((item) => item.id === logSelection.profileId);
     return project && profile ? { project, profile } : null;
   }, [logSelection, snapshot]);
+
+  const archiveViewer = useMemo(() => {
+    if (!snapshot || !archiveViewerId) return null;
+    const session = runHistory.find((entry) => entry.id === archiveViewerId);
+    if (!session) return null;
+    const { project } = resolveRunSession(session, snapshot.projects);
+    return { session, projectName: project?.name ?? t("history.projectDeleted") };
+  }, [archiveViewerId, runHistory, snapshot, t]);
 
   const effectiveBusyProfileIds = useMemo(() => {
     if (!restoreBusy) return busyProfileIds;
@@ -891,6 +982,8 @@ function AppShell() {
               onRetryRunHistory={() => void loadRunHistory()}
               onOpenRunHistory={() => setRunHistoryDrawerOpen(true)}
               onLocateRunHistory={locateRunHistory}
+              onViewArchive={(session) => setArchiveViewerId(session.id)}
+              onDeleteArchive={setArchiveToDelete}
               {...profileActionProps}
             />
           )}
@@ -971,7 +1064,15 @@ function AppShell() {
           />
         )}
         {selectedLog && snapshot && !quitOpen && !elevationOpen && !helpOpen && (
-          <LogDrawer api={api} profile={selectedLog.profile} project={selectedLog.project} capacity={snapshot.settings.logCapacity} onClose={() => setLogSelection(null)} />
+          <LogDrawer
+            api={api}
+            profile={selectedLog.profile}
+            project={selectedLog.project}
+            capacity={snapshot.settings.logCapacity}
+            archive={snapshot.runLogArchive}
+            onToggleArchive={toggleRunLogArchiving}
+            onClose={() => setLogSelection(null)}
+          />
         )}
         {externalProcess && !quitOpen && !elevationOpen && !helpOpen && (
           <ConfirmModal
@@ -1020,7 +1121,32 @@ function AppShell() {
             labels={runHistoryLabels}
             onRetry={() => void loadRunHistory()}
             onLocate={locateRunHistory}
+            onViewArchive={(session) => setArchiveViewerId(session.id)}
+            onDeleteArchive={setArchiveToDelete}
             onClose={() => setRunHistoryDrawerOpen(false)}
+          />
+        )}
+        {archiveViewer && !quitOpen && !elevationOpen && !helpOpen && (
+          <RunLogArchiveDrawer
+            api={api}
+            session={archiveViewer.session}
+            projectName={archiveViewer.projectName}
+            onDelete={setArchiveToDelete}
+            onClose={() => setArchiveViewerId(null)}
+          />
+        )}
+        {archiveToDelete && !quitOpen && !elevationOpen && !helpOpen && (
+          <ConfirmModal
+            title={t("archive.deleteTitle")}
+            detail={t("archive.deleteDetail", {
+              profile: archiveToDelete.profileName,
+              lines: new Intl.NumberFormat(locale).format(archiveToDelete.archive?.lineCount ?? 0),
+              size: formatArchiveSize(archiveToDelete.archive?.byteSize ?? 0, locale),
+            })}
+            confirmLabel={t("action.delete")}
+            busy={archiveDeleteBusy}
+            onCancel={() => setArchiveToDelete(null)}
+            onConfirm={() => void confirmArchiveDelete()}
           />
         )}
         {quitOpen && (

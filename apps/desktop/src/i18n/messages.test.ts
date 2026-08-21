@@ -73,6 +73,7 @@ describe("localized message formatting", () => {
       ["history.duration", "Duration", "持续时间"],
       ["history.exitCode", "Exit code", "退出码"],
       ["history.status", "Status", "状态"],
+      ["history.archive", "Archive", "归档"],
       ["history.actions", "Actions", "操作"],
       ["history.unavailable", "Unavailable", "不可用"],
       ["history.stillRunning", "Still running", "仍在运行"],
@@ -97,15 +98,15 @@ describe("localized message formatting", () => {
     const messages: Array<[MessageKey, string, string, MessageParams?]> = [
       ["help.topic.history", "Run history", "运行历史"],
       ["help.history.title", "Understand run history", "看懂运行历史"],
-      ["help.history.intro", "Run history records the lifecycle of profiles managed by RunCove, without archiving their console output.", "运行历史记录由 RunCove 托管的配置生命周期，但不会归档控制台输出。"],
+      ["help.history.intro", "Run history records the lifecycle of profiles managed by RunCove. Console output is archived only when you turn archiving on.", "运行历史记录由 RunCove 托管的配置生命周期；只有在你开启归档后，才会归档控制台输出。"],
       ["help.history.item1Title", "Recent and complete history", "最近记录与完整历史"],
       ["help.history.item1Detail", "Overview shows the five most recent sessions. Open View all to search up to 200 stored sessions and filter active, exited, or interrupted runs.", "概览显示最近 5 次会话。点击“查看全部”可以搜索最多 200 条已存记录，并按活动、已退出或中断筛选。"],
       ["help.history.item2Title", "Session details", "会话详情"],
       ["help.history.item2Detail", "Each row shows its project, profile, PID, start and end times, duration, status, and exit code when one is available. Deleted projects remain labeled in history.", "每行显示项目、配置、PID、开始与结束时间、持续时间、状态，以及可用时的退出码。项目删除后，历史记录仍会保留并明确标记。"],
       ["help.history.item3Title", "Conflicts and restore failures", "冲突与恢复失败"],
       ["help.history.item3Detail", "When an expected port is occupied, View occupant refreshes the snapshot and locates that exact port. Restore stops before the next profile after a failure and keeps profiles that already started running.", "预期端口被占用时，“查看占用”会刷新快照并定位到该端口。恢复途中失败时，后续配置不会继续启动，已经成功运行的配置会保留。"],
-      ["help.history.item4Title", "Historical logs are not stored", "不会保存历史日志"],
-      ["help.history.item4Detail", "Logs stay only in a bounded memory buffer for the current app session. Run history cannot reopen old logs after RunCove exits or a session is cleared.", "日志只存在于当前应用会话的有界内存缓冲中。RunCove 退出或日志被清空后，运行历史无法重新打开旧日志。"],
+      ["help.history.item4Title", "Archiving old logs is optional", "归档历史日志是可选的"],
+      ["help.history.item4Detail", "Logs always stay in a bounded memory buffer for the current app session. Turn on Archive run logs in a log drawer and every run started after that also writes its output to a file, which run history can reopen after RunCove restarts.", "日志始终保存在当前应用会话的有界内存缓冲中。在日志抽屉里开启“归档运行日志”后，此后启动的每次运行还会把输出写入文件，RunCove 重启后仍可从运行历史中打开。"],
       ["project.copyProfile", "Copy profile 2", "复制配置 2", { number: 2 }],
       ["project.copySuffix", "Copy", "副本"],
       ["project.validation.required", "This field is required.", "此字段为必填项。"],
@@ -119,5 +120,72 @@ describe("localized message formatting", () => {
     for (const [key, english, chinese, params] of messages) {
       expectBilingual(key, english, chinese, params);
     }
+  });
+
+  it("provides every run log archive label in both languages", () => {
+    const messages: Array<[MessageKey, string, string, MessageParams?]> = [
+      ["archive.toggleLabel", "Archive run logs", "归档运行日志"],
+      ["archive.unavailableGeneric", "Run log archiving could not be started this session.", "本次会话无法启动运行日志归档。"],
+      ["archive.badge.none", "Not archived", "未归档"],
+      ["archive.badge.writing", "Archiving", "归档中"],
+      ["archive.badge.finalizing", "Finalizing", "收尾中"],
+      ["archive.badge.complete", "12 lines · 3.4 KB", "12 行 · 3.4 KB", { lines: 12, size: "3.4 KB" }],
+      // The reason is already rendered by the time a badge receives it, so these two
+      // pin the frame only; archive.test.ts pins the reason wording per language.
+      ["archive.badge.partial", "Partial · quota", "不完整 · quota", { reason: "quota" }],
+      ["archive.badge.partial", "Partial", "不完整", { reason: "" }],
+      ["archive.badge.removed", "Removed · quota", "已删除 · quota", { reason: "quota" }],
+      ["archive.badge.removed", "Removed", "已删除", { reason: "" }],
+      ["archive.badge.unknown", "Unrecognized archive state: sealed", "无法识别的归档状态：sealed", { status: "sealed" }],
+      ["archive.deleteTitle", "Delete archived logs?", "删除归档日志？"],
+      ["archive.deleted", "Archived logs deleted", "归档日志已删除"],
+      ["archive.viewer.atStart", "Start of archive", "已到归档开头"],
+      ["archive.viewer.loadOlder", "Load earlier lines", "加载更早的日志"],
+      ["archive.viewer.empty", "This archive holds no lines", "该归档没有任何日志行"],
+      ["archive.viewer.counts", "12 shown · 30 recorded · 4.1 KB", "已显示 12 行 · 记录 30 行 · 4.1 KB", { loaded: 12, lines: 30, size: "4.1 KB" }],
+    ];
+
+    for (const [key, english, chinese, params] of messages) {
+      expectBilingual(key, english, chinese, params);
+    }
+  });
+
+  it("names every archive reason this build can receive", () => {
+    const reasons: Array<[MessageKey, string, string]> = [
+      ["archive.reason.writeError", "writing failed", "写入失败"],
+      ["archive.reason.quotaExceeded", "size limit reached", "达到容量上限"],
+      ["archive.reason.queueOverflow", "output arrived faster than it could be written", "输出速度超过写入速度"],
+      ["archive.reason.interrupted", "RunCove exited first", "RunCove 先退出了"],
+      ["archive.reason.userDisabled", "archiving was turned off", "归档已被关闭"],
+      ["archive.reason.quotaEvicted", "removed to free space", "为腾出空间而删除"],
+      ["archive.reason.userDeleted", "deleted by you", "由你删除"],
+      ["archive.reason.fileMissing", "the file is gone", "文件已不存在"],
+    ];
+
+    for (const [key, english, chinese] of reasons) {
+      expectBilingual(key, english, chinese);
+    }
+
+    // A newer build may write a reason this one has never heard of; the wire value
+    // must survive into the rendered string rather than be swallowed.
+    expectBilingual(
+      "archive.reason.unknown",
+      "unrecognized reason: sealed-by-policy",
+      "无法识别的原因：sealed-by-policy",
+      { reason: "sealed-by-policy" },
+    );
+  });
+
+  it("warns that archived logs can contain secrets", () => {
+    expect(renderMessage("en", "archive.toggleHint")).toContain(
+      "can contain tokens your own services print",
+    );
+    expect(renderMessage("zh-CN", "archive.toggleHint")).toContain("可能包含你的服务自己打印出的令牌");
+    expect(renderMessage("en", "help.safety.item4Detail")).toContain(
+      "can contain any token your services print",
+    );
+    expect(renderMessage("zh-CN", "help.safety.item4Detail")).toContain(
+      "可能包含你的服务打印出的任何令牌",
+    );
   });
 });

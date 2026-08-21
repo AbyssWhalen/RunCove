@@ -35,7 +35,14 @@ const snapshot: DashboardSnapshot = {
   projects: [udpProject],
   restoreSet: { profileIds: [], savedAt: null },
   privilege: { elevated: false, elevationAvailable: true, monitorOnly: false },
-  settings: { pollIntervalMs: 2_000, logCapacity: 1_000, languagePreference: "system", closeBehavior: "ask" },
+  settings: {
+    pollIntervalMs: 2_000,
+    logCapacity: 1_000,
+    languagePreference: "system",
+    closeBehavior: "ask",
+    archiveRunLogs: false,
+  },
+  runLogArchive: { enabled: false, available: true, unavailableReason: null },
   generatedAt: 1,
 };
 
