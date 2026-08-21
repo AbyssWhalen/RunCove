@@ -1,11 +1,12 @@
+use crate::archive_service::ArchiveService;
 use crate::discovery;
 use crate::error::{invalid, AppError, AppResult};
 use crate::import_observation;
 use crate::models::{
     AppSettings, AssociationSource, CloseBehavior, ConfirmAssociationRequest, DashboardSnapshot,
     DiscoveredProject, ExternalProcessRequest, LanguagePreference, PortAssociation, PortSnapshot,
-    Project, ProjectInput, RelatedPort, RestoreResult, RunLogEvent, RunSession, RunStatus,
-    RunStatusEvent,
+    Project, ProjectInput, RelatedPort, RestoreResult, RunLogArchivePage, RunLogArchiveState,
+    RunLogEvent, RunSession, RunStatus, RunStatusEvent,
 };
 use crate::state::AppState;
 use crate::storage::now_ms;
@@ -514,6 +515,73 @@ pub fn get_run_history(state: State<'_, AppState>) -> AppResult<Vec<RunSession>>
     state.storage.list_sessions(200)
 }
 
+/// Turn run log archiving on or off for the sessions that start from now on.
+///
+/// The setting is persisted before it is applied, so a database that refuses the write
+/// leaves the runtime and the stored value agreeing rather than archiving with nothing
+/// to remember it. Turning it off closes the archives that are open — an already running
+/// process keeps writing to the drawer and stops being written to disk — and turning it
+/// on never backfills a running session, because a session's archive is opened at launch
+/// and only there.
+#[tauri::command]
+pub async fn set_run_log_archiving(
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> AppResult<RunLogArchiveState> {
+    let state = clone_app_state(&state);
+    run_blocking(move || {
+        persist_run_log_archiving(state.storage.as_ref(), state.processes.archive(), enabled)
+    })
+    .await
+}
+
+fn persist_run_log_archiving(
+    storage: &crate::storage::Storage,
+    archive: &ArchiveService,
+    enabled: bool,
+) -> AppResult<RunLogArchiveState> {
+    let mut settings = storage.settings()?;
+    settings.archive_run_logs = enabled;
+    storage.save_settings(&settings)?;
+    Ok(archive.set_enabled(enabled))
+}
+
+/// Read one page of an archived session, ending at `before_offset` and working backwards.
+///
+/// `before_offset` is the `page_start_offset` of the page the viewer already has, so the
+/// first call passes `None` and gets the tail. The whole read happens on a blocking
+/// thread and is bounded by both a record count and a byte cap, so a session that wrote
+/// megabytes never crosses the IPC boundary in one message.
+#[tauri::command]
+pub async fn read_run_log_archive(
+    session_id: String,
+    before_offset: Option<u64>,
+    max_lines: Option<usize>,
+    state: State<'_, AppState>,
+) -> AppResult<RunLogArchivePage> {
+    let state = clone_app_state(&state);
+    run_blocking(move || {
+        state
+            .processes
+            .archive()
+            .read_page(&session_id, before_offset, max_lines)
+    })
+    .await
+}
+
+/// Delete one archived session's file and mark its row removed.
+///
+/// A session whose archive is still being written is refused: the file belongs to a
+/// writer that would keep appending to a deleted handle.
+#[tauri::command]
+pub async fn delete_run_log_archive(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let state = clone_app_state(&state);
+    run_blocking(move || state.processes.archive().delete(&session_id)).await
+}
+
 #[tauri::command]
 pub fn open_port(port: u16, protocol: String) -> AppResult<()> {
     crate::privileges::ensure_process_action_allowed()?;
@@ -572,6 +640,11 @@ pub fn shutdown(state: &AppState) -> AppResult<()> {
             .processes
             .stop_all_and_wait(&reservation, Duration::from_secs(8))
     });
+    // Wrap the archive up whichever way stopping went. The application is exiting either
+    // way, and a session whose process refused to stop still has queued bytes worth
+    // flushing. This never changes the shutdown result: an archive that cannot close
+    // reports itself through its own channel and leaves its row for the next run's sweep.
+    state.processes.archive().shutdown();
     if result.is_ok() {
         state.processes.complete_shutdown(&reservation)?;
     }

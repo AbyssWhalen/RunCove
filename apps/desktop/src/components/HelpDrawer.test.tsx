@@ -89,6 +89,15 @@ describe("HelpDrawer", () => {
     expect(screen.getByRole("tab", { name: "运行历史" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("heading", { name: "看懂运行历史" })).toBeVisible();
     expect(screen.getByRole("tabpanel")).toHaveTextContent("冲突与恢复失败");
-    expect(screen.getByRole("tabpanel")).toHaveTextContent("不会保存历史日志");
+    // The retired copy promised history logs were never kept. Archiving replaced that
+    // promise with an opt-in, so both halves of the new one are pinned here: memory by
+    // default, a file only for runs started after the switch is on.
+    expect(screen.getByRole("heading", { name: "归档历史日志是可选的" })).toBeVisible();
+    expect(screen.getByRole("tabpanel")).toHaveTextContent(
+      "日志始终保存在当前应用会话的有界内存缓冲中",
+    );
+    expect(screen.getByRole("tabpanel")).toHaveTextContent(
+      "在日志抽屉里开启“归档运行日志”后，此后启动的每次运行还会把输出写入文件",
+    );
   });
 });

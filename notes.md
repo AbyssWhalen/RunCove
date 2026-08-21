@@ -1,5 +1,1490 @@
 # RunCove Implementation Notes
 
+## 2026-08-21 v0.3.0 Release Decision
+
+- The user explicitly authorized commit, push, tag, and public release after the
+  isolated local demo. Release readiness is defined as no known P0/P1, the complete
+  local matrix green, GitHub CI green on the release branch, and the existing tag
+  workflow producing all expected archives plus `SHA256SUMS.txt`.
+- The release keeps two disclosed P2 limitations: a closing flush failure can
+  over-count which buffered line reached disk while byte size is reconciled, and
+  backend-composed stop/exit messages remain English under the Chinese interface.
+  Neither affects the normal archive path, process safety, or local-only boundary.
+- Tool-specific `CLAUDE.md` remains local. `AGENTS.md` is restored to its published
+  form and no CI, release-workflow, `.env`, real database, other project, or existing
+  process is modified as part of the release preparation.
+- The final release commit is intentionally one cohesive 43-path change: the frozen
+  36-path implementation/demo candidate plus seven manifest, lockfile, and public
+  release-document paths. Generated build output and local `CLAUDE.md` are excluded.
+- The official npm audit caught high-severity advisory `GHSA-2v37-7h3g-55p8` in the
+  transitive development dependency `nanoid` 3.3.17. A package-lock-only update to
+  3.3.18 followed by `npm ci` reduced the official-registry audit to zero findings; no
+  direct dependency was added. The configured mirror's audit endpoint returns 404, so
+  release evidence uses `registry.npmjs.org` explicitly.
+- The fresh local release run is honest but not wholly green in this managed Codex
+  session. Root Rust (38), frontend lint/typecheck/Vitest (157), archive (99), and
+  archive-service (11) checks pass. The desktop run is 237 pass / 1 fail / 1 ignored,
+  with only the known real-process termination test failing because Windows returned
+  `Access denied`. Node child-process creation is denied with `spawn EPERM`, preventing
+  a fresh Playwright and Vite/Tauri rerun even though both passed on the frozen tree the
+  previous day. Decision: do not change product code or tests for environment behavior;
+  require every unchanged GitHub PR check to pass before merge and tag.
+
+## 2026-08-20 v0.3.0 Freeze: The Wrap-Up Decisions
+
+- Scope: documentation and verification only — `README.md`, `HANDOFF.md`, `notes.md`, and
+  one pointer bullet in `CLAUDE.md`.
+  **No production or test source file changed**, so every decision recorded below this
+  section still stands as written. Untouched: CI, the release workflow, tags, `.env`,
+  every real database, unrelated projects, and existing developer processes. No commit,
+  no push.
+- **Decision: the README states the archive as a `main`-only, off-by-default exception
+  rather than restating v0.2.1's promise.** The contradiction was not one sentence but a
+  premise — v0.2.1's public text says session output is never written to disk, and that
+  is still true of the published zip. Six places now name the boundary explicitly: the
+  log-boundary bullet, the Desktop App and Help bullets, the new **Run Log Archive**
+  section, Architecture's index row and one-way schema step, Privacy And Process Safety,
+  and the v0.2.1 Scope exclusion. Wording rule for anything written next: the published
+  v0.2.1 build has no archive at all; on `main` it exists, stays off until the user turns
+  it on, and only affects runs started after that.
+- **Decision: both P2s stay open under the freeze, and neither is a silent risk.**
+  `line_count` over-counting after a failed *closing* flush is documented at its cause
+  (`archive.rs:2624-2630`) and can only ever overstate what was written, while the byte
+  side self-corrects from the disk. The English stop and exit messages
+  (`processes.rs:562`, `:580`) are a localization gap in strings the backend composes,
+  not a behavior defect. Fixing either would mean new production code, which the freeze
+  excludes.
+- **Finding, not a defect: a per-session `begin` failure cannot reach the drawer's
+  warning.** `unavailable_reason` short-circuits to `None` while the writer exists, so
+  that warning describes *this run's initialization* and nothing else; a session that
+  fails to open is reported through the transient `ArchiveReporter` channel and surfaces
+  as a 未归档 badge. That is the honest reading of `enabled` versus `available`
+  (`models.rs:324-335`), and it means the initialization-failure notice is reproducible
+  only by obstructing the directory **before** launch. Recorded rather than changed:
+  making a per-session failure sticky in the drawer is a product decision, not a wrap-up
+  item.
+- **Method: the initialization-failure proof deleted nothing, twice over.** The archive
+  directory was renamed aside and a 15-byte file left in its place; undoing it *moved*
+  the placeholder out to a scratch path instead of removing it, then renamed the
+  directory back. All four archives were then verified byte-identical by SHA256 (4 files
+  / 682,845 bytes). Keep this shape for any future destructive-looking proof: rename and
+  move, never delete, and re-verify by hash rather than by size.
+- Verification at the freeze, all green: root crate fmt and clippy clean with 38 tests;
+  desktop crate fmt and clippy clean with `238 passed; 0 failed; 1 ignored` out of 239;
+  `npm run lint`, `npm run typecheck`, `npm test -- --run` at 22 files / 157 tests,
+  `npm run build`, `npm run e2e` at 6 passed, and `npm run tauri build`. The manual demo
+  checklist was re-run end to end on the frozen build; its measurements — paging to
+  「已到归档开头」 at 2,261 records, the 150,054-byte delete credit measured on disk, the
+  instant toggle-off finalization with zero `"s":"system"` records — and the
+  criterion-7 nuance are in the top section of `HANDOFF.md`.
+- Carried forward: `apps/desktop/src-tauri/target/release/runcove-desktop.exe` is a
+  production-identifier build after that last `tauri build` and must not be launched —
+  the demo exe is `D:\tmp\runcove-v030-demo\RunCove-demo.exe`. Two `commands.rs`
+  port/child-timing tests have each failed once on some machine, so no cross-machine
+  all-green baseline may be claimed. `commit`, `push`, `tag`, CI, and Release remain
+  unauthorized.
+
+## 2026-08-19 v0.3.0 Local Demo Candidate: The Archive Has A Runtime Caller
+
+- Scope: `apps/desktop/src-tauri/src/` — `archive_service.rs`, `commands.rs`, `lib.rs`,
+  `models.rs`, `processes.rs`, `state.rs`, `storage.rs` — plus the frontend
+  (`App.tsx`, `api.ts`, `types.ts`, `mock-data.ts`, `styles.css`,
+  `components/{LogDrawer,RunLogArchiveDrawer,RunHistory*,OverviewView}`,
+  `components/archive.ts`, `i18n/messages.ts`) and the docs. No schema change: the
+  version 2 migration was already in place and `SCHEMA_VERSION` is untouched.
+  Untouched: CI, the release workflow, tags, `.env`, and every real database. No
+  commit, no push.
+- **Decision: `update_counters` is thinned, and nothing else is.**
+  `ThrottledArchiveIndex` (`archive_service.rs:103`) lets a session's *first* refresh
+  through and then requires 4 s or 1 MiB, whichever comes first. A pump batch can be a
+  single line, so untouched this turns a chatty child process into one SQLite write per
+  printed line. What makes it safe is that the row a reader finally sees is written by
+  `ArchiveIndex::close`; all that is thinned is how fast a *running* row catches up with
+  its file. It lives in the service rather than in `archive.rs` on purpose — the
+  writer's contract is that it refreshes after every batch and its tests assert exactly
+  that, while "often enough for a user watching a row" is an application decision. A
+  clock that has gone backwards is deliberately *not* thinned.
+- **Decision: shutdown is bounded by the queue's caps, not by a clock.** `shutdown`
+  stops the pump signal, then closes every open archive as `Interrupted`. One pump
+  drains everything queued and what can be queued is capped by `QueueBounds`, so there
+  is no timeout to tune and no file half-written by one. `close_open_archives` pumps
+  first so the bytes it can account for pass through the quota — a close does not
+  consult it — and a failed pump is reported without stopping the closes, because an
+  unwritable disk is exactly when the rows matter.
+- **Decision: the setting is persisted before it is applied.** `persist_run_log_archiving`
+  (`commands.rs:538`) writes `AppSettings` and only then calls `set_enabled`, so a
+  database that refuses the write leaves the runtime and the stored value agreeing
+  instead of archiving with nothing to remember it by.
+- **Decision: a read never crosses IPC whole.** `read_run_log_archive` is `async` +
+  `run_blocking`, seeks to the end, and walks backwards under *both* a record cap and a
+  byte cap (`MIN_PAGE_RECORDS = 1`, `DEFAULT_PAGE_RECORDS = 500`,
+  `MAX_PAGE_RECORDS = 2_000`, `archive.rs:79-85`). The viewer's cursor is the previous
+  page's `page_start_offset`, so "load earlier" is a bounded backwards walk rather than
+  a re-read of the file.
+- **Decision: turning the setting on never backfills.** A session's archive is opened at
+  launch and only there, so `set_enabled(true)` mid-run leaves the running session
+  unarchived — proven on screen, not merely intended. Turning it off closes what is open
+  as `partial` / `user-disabled` while the process keeps streaming to the in-memory
+  drawer.
+- **Two closes, two different reload problems.** The exit path emits
+  `run-archive-closed` (`processes.rs:675`) because the reload the exit event itself
+  triggers still sees `writing` — the close finishes its writes after the lock that
+  event is emitted under is released. The toggle path emits nothing at all
+  (`close_open_archives` announces no rows), so `App.tsx`'s `toggleRunLogArchiving`
+  awaits a history reload after `setRunLogArchiving` resolves; that is deterministic
+  only because the command is `async` + `run_blocking`, which makes every affected
+  archive final on disk before the promise settles. Both were caught on screen. The
+  second guard was checked for teeth by breaking it and watching
+  `App.history.test.tsx` fail, then restoring it.
+- **`finalizing` is a frontend inference, not a wire status.** `components/archive.ts`
+  derives it from a `writing` row whose session already has `endedAt`, which is the one
+  state the backend cannot name — the row is still open while the writer is closing it.
+  `canViewArchive` excludes `none`/`removed`; `canDeleteArchive` allows
+  `complete`/`partial`/`unknown`.
+- Verification: root crate fmt and clippy clean with 38 tests; desktop crate fmt and
+  clippy clean with `238 passed; 0 failed; 1 ignored` out of 239 for
+  `cargo test --all-targets` (99 `archive`, 31 `storage`, 26 `commands`, 17 `state`,
+  13 `processes`, 12 `discovery`, 11 `archive_service`, 7 each `import_observation` /
+  `models` / `tests`, 3 each `language` / `single_instance`, 2 `privileges`, 1 `error`);
+  `npm run lint`, `npm run typecheck`, `npm test -- --run` at 22 files / 157 tests
+  (29 of them the two new archive files), `npm run build`, `npm run e2e` at 6 passed,
+  and `npm run tauri build`. All green.
+- Local acceptance: all seven criteria proven on an isolated demo build
+  (`com.abysswhale.runcove.demo0819`), with no production RunCove running, no real
+  database opened, and no existing developer process touched. Evidence and the
+  reproduction path are in the top section of `HANDOFF.md`.
+- **The initialization-failure case was proven without deleting anything.**
+  `run-log-archives` was *renamed* aside and a 15-byte file left in its place, so the
+  failure was real (`os error 183`) while every archived byte stayed on disk. Port
+  scanning, project launch, and the in-memory drawer were all unaffected; the
+  placeholder never grew, and both archives measured byte-identical afterwards.
+- Residual limitations, recorded and not blocking the demo. **P2:** `line_count` can
+  over-count a session whose *closing* flush failed — a small record is counted when
+  `write_all` returns and a partial flush cannot be attributed per line; the byte side
+  self-corrects from the disk and the normal path is unaffected. **P2:** the
+  process-exit toast reads English ("Process exited normally") under a Chinese UI,
+  because that string is composed in the backend. **Measurement trap:** on NTFS,
+  `Get-ChildItem` reports `Length = 0` for an archive whose writer handle is open — the
+  directory entry is stale until the handle closes, so an open archive must be measured
+  through an opened handle, which is what RunCove's own reader does.
+
+## 2026-08-18 v0.3.0 Writer Slice C: The Caller-Facing Close
+
+- Scope: `apps/desktop/src-tauri/src/archive.rs` only — `ArchiveWriter::close`
+  (`archive.rs:2567`) and `close_all` (`:2694`), the four private helpers they are built
+  from (`begin_close` `:2729`, `write_taken` `:2773`, `write_residual_gap` `:2806`,
+  `append` `:2837`), the `ClosingSession` struct (`:1655`), the `worsened` fold
+  (`:1680`), and three behavior-preserving refactors (`take_session` `:1417`,
+  `pending_write` `:1625`, `next_write` `:2093`). **No `todo!` remains in the module.**
+  Untouched: the `Storage`-backed `ArchiveIndex`, the commands, the frontend, CI, the
+  release workflow, tags, `.env`, and any real database. No commit, no push. `lib.rs`
+  unchanged, so the feature still has no runtime caller.
+- **Decision: the close holds `pump_lock`, and that is not optional.** The pump borrows
+  the session's handle out of its slot for the length of a write. A close that did not
+  serialize against it could reach `begin_close` mid-write, find `slot.file == None`,
+  and silently write nothing — every record it had accepted lost with a `complete` row
+  over an incomplete file. The lock order is `pump_lock → open → queue → total`.
+- **Decision: the boundary marks and extracts in the same critical section.** Marking
+  `Closing` tells `enqueue` to refuse; taking the session's records tells the close what
+  it owes. Doing them separately leaves a window in which a record is neither refused
+  nor written — stranded in the queue, blocking `finish_session`, holding room. So
+  `begin_close` does both under the open lock and the queue lock, and does all the file
+  work after releasing them.
+- **Decision: a refusal is inert, and that is the whole of the double-close rule.** A
+  slot that is missing, `Opening`, or `Closing` is refused with a per-state message and
+  nothing else happens: no file, no counter, no `index` call. So a second close cannot
+  overwrite the first one's row, and `close_all` with nothing open is `Ok` and equally
+  inert.
+- **Decision: the first write failure ends the session, and everything behind it is
+  charged.** A handle that has refused bytes will refuse them again, so retrying inside
+  a close would only stall it. The remaining records are `discard`ed — charged to the
+  row's drop counters — rather than dropped silently, because a line that left a capture
+  thread has to end up in a counter somewhere.
+- **Decision: the residual gap belongs to *this* close and to no other.** The trailing
+  run of losses is written as one `LogStream::System` line whose text is `gap_line(gap)`
+  and whose timestamp is `ended_at`, then counted into `line_count` and charged to the
+  quota. `writer_close` still writes none: it is closing *because* the disk refused a
+  write or the cap refused a byte, and such a file must not be asked for one more line.
+  The distinction is the file's state, not a change of policy.
+- **Decision: a close does not consult the quota.** Its records were accepted while the
+  session was open, and its linearization point is already behind it, so a refusal would
+  have nowhere to go but the drop counters of a session that did nothing wrong. Worse,
+  `room_for` can fail *retryably* through eviction, and a close cannot retry. The
+  overshoot is bounded — one session's queued bytes plus one gap line — and every byte
+  is still charged, so the next `pump` and the next sweep both see the truth.
+- **Decision: the verdict accumulates.** `worsened` folds `QueueOverflow` when the drop
+  counters are non-zero and `WriteError` when the file refused or could not be synced, on
+  top of the caller's `reason`; `Complete` iff nothing folded. `most_severe` is a total
+  order, so the result is fold-order independent — a clean `close_all(UserDisabled)`
+  still reports `user-disabled`, and a session that also lost lines reports the worse of
+  the two.
+- **Decision: the slot is removed before the row is written.** An index failure then
+  returns `Err` over durable bytes and a `writing` row — precisely what the startup
+  sweep repairs to `partial` / `interrupted` — instead of leaving a session that is open,
+  unclosable, and undeletable. The user-visible consequence is that a failed close is
+  retryable by restarting, never by closing again.
+- **Decision: `finish_session`'s `Err` is defaulted rather than propagated, and the
+  comment says why.** It refuses only while the session still has queued records, and the
+  boundary took every one of them, so it is unreachable; returning there would leave the
+  slot `Closing` forever.
+- **One test added, `a_close_writes_the_trailing_gap_no_later_record_could_carry`.** The
+  14 red tests never reach the residual gap — every existing gap test has a following
+  record that carries it — so the acceptance criterion "residual gap correct" had nothing
+  behind it. The new test drops two records with nothing after them and pins the file's
+  last line as the gap, its `t` as the close's `ended_at`, `line_count == 3`,
+  `byte_size == text.len()`, the row's drop counters, `partial` / `queue-overflow`, and
+  an empty queue. It uses only existing helpers: no new seam, and no production change
+  was needed to make it pass.
+- **Residual limitation, carried at P2 by the user's instruction.** A small record is
+  buffered, counted into `line_count` when `write_all` returns, and can still be lost if
+  the closing flush fails; the byte side self-corrects from the disk, so the error is
+  only ever an over-count on a failed-disk path. No design was expanded for it this
+  round, the normal path is unaffected, and it is documented on `return_file`.
+- Verification in `apps/desktop/src-tauri`: each of the 14 C tests alone (all 14 pass),
+  then the new test alone, then the archive suite **83 passed; 0 failed**, then
+  `cargo test --lib` **`202 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out`**
+  out of 203, identical under `-- --test-threads=1`, `cargo fmt --all -- --check` clean,
+  `cargo clippy --all-targets --all-features -- -D warnings` clean with no `#[allow]`
+  added. The first `--all-targets --all-features` run failed
+  `commands::tests::manual_start_stays_starting_until_managed_expected_port_is_ready`
+  (`commands.rs:2108`, the child bound its port before the check that it had not yet);
+  it passed alone three times and the whole matrix passed on retry. That test was neither
+  read for this purpose nor modified, and **no stable full-suite all-green baseline is
+  claimed**.
+
+## 2026-08-18 v0.3.0 Writer Slice B: The Steady-State Write Path
+
+- Scope: `apps/desktop/src-tauri/src/archive.rs` only — the queue's six settle bodies
+  with the reservation accounting, `ArchiveWriter::enqueue` and `pump`, the `Closing`
+  state and the private writer-initiated close, and the quota's eviction. Ten `todo!`
+  bodies became **two**: the caller-facing `close` (`archive.rs:2506`) and `close_all`
+  (`:2513`), which are slice C. Untouched: the `Storage`-backed `ArchiveIndex`, the
+  commands, the frontend, CI, the release workflow, tags, `.env`, and any real
+  database. No commit, no push. `lib.rs` unchanged, so the feature still has no
+  runtime caller.
+- **Decision: a record for a session that is not `Open` is ignored, not charged.** The
+  queue's bound refusals are charged as before, but a record whose session is
+  `Closing` or gone is dropped without a counter, because the drop counters live in
+  that session's row and a closed session's row is already written — charging it would
+  produce a number nobody can ever read. This is the one place where "every line ends
+  up in a counter" does not hold, and it holds nowhere else: the three unreachable
+  arms inside `pump` (a slot that vanished between two locks, a missing handle, a
+  missing slot on the way back) all charge rather than drop.
+- **Decision: `enqueue` is hand-over-hand, and `state` is what it reads.** It holds
+  the open-session lock only to test `state == SlotState::Open`, takes the queue lock,
+  and drops the open lock before touching the queue, so the fixed `open → queue` order
+  holds with no window where both are free. It reads `state`, never the presence of
+  the file handle, because the pump borrows that handle out of the slot for the length
+  of a write — a record arriving mid-write is still `Open` and must be accepted. That
+  is what makes `SlotState` load-bearing rather than decorative.
+- **Decision: `room_for` takes bytes, not a session id.** The per-session cap is
+  checked first because no eviction can relieve it — removing someone else's archive
+  does not shrink this session's file — and only then the directory total, in a loop
+  that evicts one archive per turn. Neither cap is about *who* is writing, so the
+  function takes the two numbers and nothing else. The first draft passed the session
+  id through and silenced it with `let _ = session_id;`; that is exactly the bypass
+  marker this repo forbids, so the parameter was removed instead of suppressed.
+- **Decision: an `Unavailable` total refuses without evicting.** A directory whose
+  size could not be measured must not be grown, and it must also not be *emptied* on a
+  guess: evicting archives to make room under an unknown total would delete real logs
+  to satisfy arithmetic nobody has. So the session closes `partial` /
+  `quota-exceeded` and only the next startup sweep can restore a real total.
+- **Decision: eviction filters before it sorts, and credits the disk.** Candidates are
+  narrowed to `Complete`/`Partial` rows with a non-null `ended_at` that this writer
+  does not hold open, and only then ordered by `ended_at`, `started_at`, `session_id`.
+  `index.rows()` is read *before* the open-session lock so the lock order survives.
+  The file is resolved through `verified_file_name` — a row naming another session's
+  file is reported, not skipped, because `file_name` is the single field that decides
+  which bytes go — measured, removed, credited at its **measured** length, and only
+  then marked `removed` / `quota-evicted`. The credit precedes the row write because
+  the bytes are gone whatever the index answers.
+- **Decision: the writer-initiated close writes no gap line.** `writer_close` takes
+  both halves of the drop history from `finish_session` and deliberately leaves
+  `residual_gap` unwritten. A session closing because its disk failed or because the
+  quota left it no room cannot be asked to append one more line — the write that would
+  carry the gap is the write that just failed, or the byte the quota just refused. So
+  the row's `dropped_lines` / `dropped_bytes` are the only surviving record of the
+  loss, which is why every writer-close path charges the batch remainder instead of
+  discarding it.
+- **Decision: the failure order inside a write is handle, charge, close.** `write_one`
+  hands the file handle back before charging the record and closes only after, because
+  `writer_close`'s critical section calls `discard_session` and then `finish_session`,
+  and `finish_session` refuses while that session still has records queued. Charging
+  first is what leaves nothing behind for it to refuse over.
+- **Decision: `finish_batch` flushes once per session, and a failed flush is that
+  session's close.** One `flush` and one `update_counters` per session that actually
+  wrote, rather than per record, so a batch of a hundred lines makes one index write.
+  A flush that fails becomes `writer_close(WriteError)` for that session and the batch
+  continues with the others — a write error is a session-level fact, never a pump
+  error, so `pump` still returns `Ok`.
+- **Residual limitation, recorded rather than papered over: `line_count` can overstate
+  a session whose closing flush failed.** A record small enough to fit the 64 KiB
+  `BufWriter` is counted into `line_count` when `write_all` returns, before the bytes
+  reach the disk. If the batch's closing flush then fails, the close measures the file
+  and corrects `byte_size` and the directory total from disk, but `line_count` can name
+  a line the file does not hold. A pending-line counter would not close the gap either,
+  because a flush can go out *partially* — saying which buffered lines survived needs
+  each line's byte length, i.e. per-line state the writer does not keep. No current
+  test covers this case, it is reachable with the existing `fail_write_of` seam, and it
+  is documented on `return_file`. The exposure is bounded: at most one buffer's worth
+  of lines, in one session, on a failed-disk path, and only in the direction of
+  over-counting what was written — no line the pump refused goes uncounted.
+- **The authorized test rewrite, and its limit.** `ArchiveQueue::drain` is removed and
+  a `settle_all(&mut queue)` helper (`begin_batch`, then `take_front` + `release` until
+  empty) replaced it at all six call sites, with `lines_and_gaps` rebuilt on it. In
+  `every_short_enqueue_sequence_keeps_the_queues_invariants` the local `drained` became
+  `settled` and three assertion messages were reworded ("a settled queue holds
+  nothing", "settled in arrival order", "the gap each settled record carries"). That is
+  the whole of the permitted change — "drain 后为空" → "settle 后为空". No assertion was
+  weakened, retargeted, or removed, and the exhaustive sweep still checks every
+  invariant it checked before. `allow_write_of` was not added, as instructed.
+- **Two visibilities narrowed, closing the debt CLAUDE.md recorded.**
+  `ArchiveWriter::queue` is now a private field read by `enqueue`, `pump`, and
+  `writer_close`, and `ArchiveQueue::finish_session` is module-private with
+  `writer_close` as its production caller. `ArchiveQueue::peek_front` remains `pub`
+  with test-only callers — `next_write` uses the module-private `front()`, which yields
+  the whole record rather than a name and a length — and being on a `pub` type, that is
+  not `dead_code`.
+- Verification in `apps/desktop/src-tauri`: each of the 15 target tests run alone
+  first, all 15 green individually, plus the rewritten exhaustive sequence test; then
+  `187 passed; 14 failed; 1 ignored; 0 measured; 0 filtered out` out of 202 for the lib
+  target, identical in parallel, under `-- --test-threads=1`, and under
+  `--all-targets --all-features`; `cargo fmt --all -- --check` exits 0 and
+  `cargo clippy --all-targets --all-features -- -D warnings` is clean with no
+  `#[allow]` added. The archive suite is 82 tests, **68 green / 14 red**, up from
+  53/29 — 172 + 15 = 187, 29 − 15 = 14, so exactly the fifteen turned and nothing
+  regressed. All 14 failures are `todo!` panics: 14 `panicked at` lines, 14 `not yet
+  implemented` lines, **zero** assertion lines; sites `archive.rs:2506` (`close`) ×12
+  and `:2513` (`close_all`) ×2, three of the twelve reported on the close-race seam's
+  helper thread. `commands::tests::external_termination_with_verified_identity_stops_tree_and_releases_port`
+  passed in all three modes here, but it kills a real process tree and binds a real
+  port and failed on the reviewer's machine, so **no stable full-suite all-green
+  baseline is claimed** and `commands.rs` was not touched.
+
+## 2026-08-18 v0.3.0 Retry-Contract Red Tests: What A Failed Pump May Not Lose
+
+- Scope: `apps/desktop/src-tauri/src/archive.rs` only, and deliberately red — the five
+  corrections the review attached to its refusal of the B/C plan, as seven new tests,
+  two new test seams, one shared assertion helper applied to seven existing close
+  tests, one test renamed and tightened, and the API surface the retry contract needed
+  in order to be stated at all. **No body was implemented.** Untouched: the
+  `Storage`-backed `ArchiveIndex`, the commands, the frontend, CI, the release
+  workflow, tags, `.env`, and any real database. No commit, no push.
+- **Decision: the queue owns every record until it is settled; the pump owns none of
+  them.** The earlier sketch — `in_flight: usize` on the queue and a local
+  `Vec<QueuedRecord>` inside `pump` — cannot survive its own failure: a `pump` that
+  returns `Err` drops that vector and the records with it. So `begin_batch` moves the
+  queued records into an in-flight list and frees nothing, `peek_front` and `take_front`
+  hand them out without freeing anything, and exactly two calls settle a record —
+  `release` (written) and `discard` (lost, and charged). A failed pump therefore needs
+  no undo: nothing has to be put back, the next `begin_batch` appends new arrivals
+  *behind* what the last one left, and the retry resumes at the same record in the same
+  order. `requeue_front` was rejected for the same reason it looked convenient — a
+  record leaving the queue and coming back is two chances to reorder or lose it.
+- **Decision: the four bounds count reservations, not queue length.** A record whose
+  fate is undecided still occupies memory, so `len()`, `is_empty()`, and
+  `queued_bytes()` must report queued plus in-flight plus taken-but-unsettled, and
+  `enqueue`'s `total_records` test must stop reading `self.queued.len()`. If any bound
+  stopped counting an in-flight record, a long run of failing pumps would admit an
+  unbounded number of records behind the batch it cannot write, which is the exact
+  failure the bounds exist to prevent. Every existing green queue test keeps passing
+  unchanged, because with no batch in flight the two readings coincide.
+- **Decision: a failed removal is retryable; nothing eligible is terminal.** These are
+  different states and the writer must treat them differently — report the first and try
+  again on the next tick, close the session `partial` / `quota-exceeded` only for the
+  second. On Windows a removal usually fails because someone else holds a handle for a
+  moment (a scanner, the indexer), and discarding a session's logs over another file's
+  handle is the wrong trade. What makes the retry safe rather than unbounded is the
+  reservation accounting above: memory is capped by the bounds however long the
+  transient lasts.
+- **Finding: only one injectable failure is actually repeatable.** Two obvious
+  candidates are not. `index.fail("mark_removed")` *progresses* — the file is removed
+  and its bytes credited on the first round, so a second round needs no eviction at all
+  — and a write error is *terminal* for its session, which closes and can never fail
+  again. Only an eviction whose candidate exists and whose file will not go leaves the
+  writer in the state it started in, so sticky `TestFs::fail_remove` is the seam the
+  repeated-failure test uses.
+- **Decision: `verified_file_name` gates eviction, and a crossed row is reported rather
+  than skipped.** `file_name` is the one row field that decides which bytes go, and the
+  row is data out of a database this build does not exclusively own, so the ownership
+  gate belongs on the eviction path exactly as it does on `read` and `delete`. Skipping
+  to the next candidate would make a corrupt row invisible; returning `Err` makes it
+  visible, and the writing session's record has to survive that `Err` still queued so
+  the retry after the row is repaired writes it exactly once.
+- **Decision: after a short write, `byte_size` is the residue the disk actually holds
+  and the incomplete record is a drop.** A `write` may legally accept less than it was
+  given, so a fragment of a line can be on the disk with the rest gone. Counting the
+  fragment's bytes keeps the hard quota from being under-counted; counting the record as
+  a dropped line keeps `line_count` honest, because a fragment is not a line. This has a
+  consequence B must face: `io::Write::write_all` never reports how much it wrote, so
+  the write-error close has to measure the file (or write through a counting loop) rather
+  than assume the buffer went in whole.
+- **Decision: no `allow_write_of` seam.** A write failure is terminal for its session,
+  so nothing in the writer could ever recover that file's writes and no test can
+  observe a recovery. An uncalled test helper is `dead_code` under `-D warnings`, and
+  an `#[allow]` bypass is not permitted here, so the approved by-name injection landed
+  as `fail_write_of` and `short_write_then_fail_of` only. Both inject by file name
+  rather than by call count, so a two-session test says *which* session's disk failed
+  instead of depending on which one the writer reached first.
+- **Decision: the closing boundary is a deterministic refusal.** Because the committed
+  close marks a session closing *and* extracts its accepted records in one critical
+  section, a record arriving during the file work that follows can only be refused. The
+  boundary test's permissive "written or refused" branch was therefore replaced by a
+  single equality — a tightening, not a retarget: the outcome it used to allow as a
+  second correct answer is the one the design now rules out.
+- **Residual limitations.** `every_short_enqueue_sequence_keeps_the_queues_invariants`
+  was not converted to the batch protocol this round: a `todo!` at the first sequence's
+  `begin_batch` would abort the test before any sequence finished and cost a round of its
+  enqueue and bounds coverage, while the reservation contract is already fully stated by
+  the new dedicated tests. It converts in B, green in the same round. `ArchiveWriter`'s
+  `queue` field is `pub` for this one slice, for the same reason
+  `ArchiveQueue::finish_session` is, and becomes private when `enqueue` and `pump` are
+  its production readers; `drain` is superseded and should go in that same slice. Ten
+  `todo!` bodies remain — six in `ArchiveQueue`, four in `ArchiveWriter` — and nothing
+  in the application calls this module, so none of it can be switched on by accident.
+- Verification in `apps/desktop/src-tauri`: `cargo fmt --all -- --check` exits 0,
+  `cargo clippy --all-targets --all-features -- -D warnings` is clean, and
+  `cargo test --lib --all-features` reports
+  `172 passed; 29 failed; 1 ignored; 0 measured; 0 filtered out` out of 202 — identical
+  in parallel, single-threaded, and under `--all-targets --all-features`. All 29 failures
+  are `todo!` panics (29 `panicked at`, 29 `not yet implemented`, zero `assertion` /
+  `left ==` lines), at `enqueue` ×23, `begin_batch` ×3, `close` ×2, `peek_front` ×1. The
+  archive suite is 82 tests, 53 green / 29 red, with the green count unchanged from slice
+  A. `commands::tests::external_termination_with_verified_identity_stops_tree_and_releases_port`,
+  which the reviewer saw fail with a Windows "Access denied", passed here in all three
+  run modes and again alone; it kills a real process tree and binds a real port, so it is
+  environment-dependent and flaky, and no stable all-green baseline is claimed for it.
+  `commands.rs` was not modified.
+
+## 2026-08-18 v0.3.0 Writer Slice A: Reading And Deleting One Archive
+
+- Scope: `apps/desktop/src-tauri/src/archive.rs` only — the quota total behind a
+  mutex, `credit_removed`, `read`, `delete`, and the shared `row_of` they both start
+  from, plus the module header, two stale placeholder comments removed, and one
+  in-test comment whose number was wrong. No test was added, weakened, or retargeted.
+  `pump`, `close`, `close_all`, and eviction were deliberately left alone, so four
+  `todo!` bodies remain instead of six. Untouched: the `Storage`-backed
+  `ArchiveIndex`, the commands, the frontend, CI, the release workflow, tags, `.env`,
+  and any real database. No commit, no push.
+- **Decision: implement the two paths that only ever take bytes away, before the one
+  that adds them.** `read` and `delete` need no queue, no buffered writer, and no
+  per-session counters; what they need is the ownership gate and the quota total.
+  Slicing them off first means the total's interior mutability arrives with its one
+  real writer — the delete that decrements it — instead of as a field nothing yet
+  uses, and it puts the whole `row → verified_file_name →
+  resolve_ordinary_archive_file` chain under test before any code depends on it.
+- **Decision: the quota total is a mutex and the leaf of the lock order.** A delete
+  arrives on a command thread and gives bytes back while a pump on another takes
+  them, so the number cannot belong to one thread. Nothing else is taken while it is
+  held and it is never held across a file operation or an index write, so the two
+  callers never wait on each other's disk. `total_bytes` reads through it rather than
+  copying a field.
+- **Decision: `credit_removed` saturates, and an unavailable total stays
+  unavailable.** A total that has drifted below the length of the file just removed
+  must not wrap into a number the size of the disk, so the subtraction saturates. And
+  a delete reports how long one file was, not how much the directory holds — nothing
+  about it can make an unmeasurable directory measurable again, so
+  `QuotaTotal::Unavailable` is left alone and only the next startup sweep recovers a
+  real total. That is the same asymmetry the sweep already states: an unknown total
+  means "no room", and guessing is worse than refusing.
+- **Decision: `delete`'s open-session refusal is a check before the work, and the
+  reason it is safe is written down.** No state lock spans a file removal, so the
+  check and the removal are not one critical section. What closes the gap is not the
+  check alone: an archive file is created with `create_new`, so a `begin` racing a
+  delete cannot take the file that is still there, and a session id is generated once
+  for the run that produces it, so the id a user deletes is not one a later run
+  begins. Stating the two real reasons is better than claiming a critical section the
+  code does not have.
+- **Decision: a row whose file is already gone is reported, not quietly marked
+  removed.** The startup sweep already finishes that state, and it finishes it as
+  `removed` / `file-missing` — which is what happened — rather than recording a user
+  delete that removed nothing. The writer's job here is to refuse to guess.
+- **Residual limitation.** The slice turns five tests green, not the six the plan
+  claimed. `deleting_an_archive_is_refused_while_its_writer_is_open` asserts the
+  refusal, then closes the session and deletes again, so its panic site moved from
+  `delete` to `close`; its delete half passes and the test stays red until the `close`
+  slice lands. Nothing in this slice has a runtime caller yet, since `lib.rs` still
+  only declares the module, so `read` and `delete` are proven by their tests and not
+  by use. `read` loads the whole archive into a `String`, which is bounded by the 10
+  MiB per-session cap and is the shape the plan's viewer expects; a streaming read is
+  not in v0.3.0's scope.
+- Verification in `apps/desktop/src-tauri`: each of the six target tests was run
+  alone first — five `ok`, the sixth failing at `close`. Then
+  `cargo fmt --all -- --check` and
+  `cargo clippy --all-targets --all-features -- -D warnings` clean;
+  `172 passed; 22 failed; 1 ignored; 0 measured; 0 filtered out` out of 195 for the
+  lib target, identical in parallel, single-threaded, and under
+  `--all-targets --all-features`. Every failure is a `todo!` panic — `enqueue` ×20,
+  `close` ×2 — with zero assertion lines in any run. The archive suite is 75 tests,
+  53 green / 22 red; four are `#[cfg(windows)]`, so a non-Windows host runs 71.
+
+## 2026-08-17 v0.3.0 Review Revisions: Four Corrections Before The Writer
+
+- Scope: `apps/desktop/src-tauri/src/archive.rs` only — six new red tests, one new
+  capability in the filesystem double, a renamed gate, two rewritten doc comments, one
+  new session id. No production body was written: `ArchiveWriter`'s six `todo!` bodies
+  are the same six. Untouched: the `Storage`-backed `ArchiveIndex`, the commands, the
+  frontend, CI, the release workflow, tags, `.env`. No commit, no push.
+- **Decision: the closing boundary is a linearization point, and the rejected design
+  was a real defect rather than a style preference.** Draining a session and marking it
+  closed afterwards leaves a window between the last drain and the state change,
+  because `enqueue` does not take the pump's lock. A record accepted in that window is
+  neither written nor refused: it sits in the queue of a session that will never pump
+  again, which blocks `finish_session`, strands the entry, and holds queue room other
+  sessions need. The correction is to mark the session closing *and* extract everything
+  it has accepted inside one critical section, under the fixed open → queue lock order,
+  and to do the file work only after both locks are released.
+- **Decision: a writer-initiated close counts every record it accepted and never
+  wrote.** A write error or a crossed quota stops a session in the middle of a batch
+  while `enqueue` is still accepting, so records exist that the archive took
+  responsibility for and did not persist. They are charged to `dropped_lines` /
+  `dropped_bytes`. Discarding the batch remainder without counting it was rejected: the
+  row would then report a smaller loss than the archive actually took, and a partial
+  archive that under-reports is indistinguishable from a complete one, which is the one
+  thing the drop counters exist to prevent. A quota close writes no gap line for those
+  records — the file is stopping precisely because it is at its cap, and a gap line is
+  more bytes in that same file — so the row's counters are the entire record of the
+  loss and have to be exact.
+- **Decision: eviction filters on eligibility before it sorts.** A session is a
+  candidate only when its status is `complete` or `partial` and its `ended_at` is
+  non-null, and never while this writer holds it open. The order is `ended_at`, then
+  `started_at`, then `session_id`: the question eviction asks is which archive has been
+  finished longest, `started_at` only breaks a tie between archives that ended
+  together, and the session id makes the choice deterministic when both agree. Reading
+  a missing `ended_at` as zero would invert the rule and delete the row this build
+  understands least, first.
+- **Decision: freed bytes are the disk's number, not the row's.** When the writer
+  deletes an archive file and the row update that follows fails, the in-memory quota
+  total is credited with the length measured on disk. The row's `byte_size` can be
+  stale by any amount, and crediting it would make the archive refuse room the
+  directory actually has. The inconsistent row is left for the next startup sweep,
+  which already knows how to mark a row whose file is gone, and the failure is
+  reported rather than swallowed. Both paths obey this: quota eviction and explicit
+  delete.
+- **Decision: state `enqueue`'s guarantee as "no I/O", not "never blocks".** It takes
+  the open-session lock and then the queue lock, because whether a session is still
+  accepting is part of the queue's answer, so it is not lock-free and calling it
+  non-blocking is false. What it guarantees is that a capture thread never waits on a
+  disk or a database. For the same reason "no lock is held across I/O" is scoped to the
+  three state locks — open sessions, queue, quota total — while the pump's lock spans
+  the writer's file and index work by design. An overstated invariant is worse than a
+  modest one, because the next reader designs against it.
+- **Residual limitation.** All six tests are red at a `todo!`, and five of them stop at
+  `enqueue` — the first unwritten body they touch — so the machinery they were written
+  to exercise is still unexercised. That includes the new seam: `TestFs::hold_write_of`
+  holds one named file's next `write`, which is the only place a test can stand inside
+  the post-drain, pre-closing window, since a `sync_data` hold arrives after the state
+  has already changed under every ordering. Neither race test reaches its gate yet. The
+  boundary test deliberately permits two outcomes, written or refused, and forbids only
+  the third, stranded in the queue; which of the two the writer picks is still an open
+  design choice. And the eviction filter's `ended_at` half is asserted against a row
+  RunCove's own schema cannot store — `CHECK ((status = 'writing') = (ended_at IS
+  NULL))` rejects a `complete` row with a null `ended_at` — so it is tested as what it
+  is, a defence against a database this build did not write.
+- Verification in `apps/desktop/src-tauri`: `cargo fmt --all -- --check` and
+  `cargo clippy --all-targets --all-features -- -D warnings` clean;
+  `167 passed; 27 failed; 1 ignored; 0 measured; 0 filtered out` out of 195 for the lib
+  target, identical in parallel, single-threaded, and under
+  `--all-targets --all-features`. Every failure is a `todo!` panic — `enqueue` ×20,
+  `delete` ×5, `close` ×1, `read` ×1 — with zero assertion lines in any run. The archive
+  suite is 75 tests, 48 green / 27 red; four are `#[cfg(windows)]`, so a non-Windows
+  host runs 71.
+
+## 2026-08-17 v0.3.0 Closing Boundary: Nothing Follows A Close
+
+- Scope: `apps/desktop/src-tauri/src/archive.rs` only, tests and test seam only. Six
+  new red tests, one new capability in the filesystem double, one new bounds
+  fixture. No production body was written: `ArchiveWriter`'s six `todo!` bodies are
+  the same six. Untouched: the `Storage`-backed `ArchiveIndex`, the commands, the
+  frontend, CI, the release workflow, tags, `.env`. No commit, no push.
+- **Decision: state the closing boundary as tests before implementing the writer.**
+  The write path's hardest question is not how a line is written but what may follow
+  a close, because that is where three pieces of state can disagree — the queue's
+  per-session entry, the file handle, and the row. Three cases are now pinned: a
+  late record after `close_all(UserDisabled)`, a record racing a close that is
+  already inside `sync_data`, and closing a session that produced nothing or has
+  already been closed. In each case the file, the row (drop counters and `ended_at`
+  included), and the index call log must be exactly what the close left.
+- **Decision: assert the queue's state through the bounds, not through a field the
+  writer does not have.** `ArchiveWriter` still owns no `ArchiveQueue` —
+  `initialize` discards `bounds` and `limits` — so a test cannot read the writer's
+  queue, and adding an accessor for the test to read would be inventing production
+  API for the test's benefit. `one_slot_bounds()` (one queued record in total)
+  reverses the problem instead: a record wrongly queued for a closed session would
+  be occupying the only slot, so the *next live session* loses a line, and that loss
+  is an ordinary assertion on that session's row and file. Two of the six tests read
+  the boundary that way.
+- **Decision: the concurrency seam is a rendezvous, not a sleep.**
+  `TestFs::hold_sync_of(file_name)` holds the next `sync_data` on one named file
+  until the test lets it go, so a close can be stopped exactly where it has drained
+  and flushed the session and has not yet released the handle or written the row.
+  Three properties keep it honest: the gate is taken out from under the state lock
+  before it blocks (no lock is held across the pause, so the concurrent `enqueue`
+  cannot deadlock against the double); it fires once and by file name, matching the
+  double's existing "by call count or by name, never by timing" rule; and
+  `SyncHold::wait_for` re-raises the closing thread's panic with `resume_unwind`
+  when that thread finishes without reaching the seam, so an unimplemented body is
+  reported rather than hung on. The 25 ms poll inside `wait_for` is a liveness
+  check, the only duration in the file, and no assertion depends on it.
+- **Residual limitation.** The seam is not yet exercised by anything: both race
+  tests panic at `enqueue` on the main thread before the close thread is spawned, so
+  the gate is machinery waiting for the slice that makes `enqueue` real. Whether the
+  writer *refuses* or *ignores* a record for a closing session is also still open —
+  the tests deliberately pin the consequences (nothing in the file, nothing in the
+  counters, no room taken) rather than the choice.
+- Verification in `apps/desktop/src-tauri`: fmt clean (one rustfmt diff — a stray
+  blank line — applied and re-checked), clippy clean under
+  `--all-targets --all-features -- -D warnings`, `cargo test --lib` at
+  `167 passed; 21 failed; 1 ignored` out of 189 — identical in parallel,
+  single-threaded, and under `--all-targets --all-features`. All 21 failures are
+  `todo!` panics with **zero** `assertion` lines: `enqueue` ×15, `close` ×1,
+  `read` ×1, `delete` ×4. The archive suite is 69 tests, 48 green / 21 red.
+
+## 2026-08-17 v0.3.0 Queue Lifecycle: Finishing a Session Frees It
+
+- Scope: `apps/desktop/src-tauri/src/archive.rs` only, in response to a review
+  finding against the queue slice below. One new operation, one new value type, six
+  new tests, and the doc comments that stated the behavior it replaces. Untouched:
+  `ArchiveWriter`'s six `todo!` bodies, the `Storage`-backed `ArchiveIndex`, the
+  commands, the frontend, CI, the release workflow, tags, `.env`. No commit, no push.
+- **The finding, accepted.** `sessions` held a `SessionQueue` for every session the
+  process had ever seen and `drain` walked all of them on every pump, so both memory
+  and pump cost grew with historical session count rather than with the number of
+  open sessions. The queue slice's notes below state that as intentional; this
+  section supersedes that.
+- **Decision: one terminal operation that returns both halves, or the leak comes
+  back.** `finish_session(session_id) -> AppResult<FinishedSession>` where
+  `FinishedSession { residual_gap: Option<DropCounters>, dropped: DropCounters }`.
+  Two accessors would have been the obvious shape — `take_pending_gap` already
+  returns the residual and `dropped` already returns the totals — and it was
+  rejected: a caller that took one and forgot the other would either write a gap
+  line twice or file a row whose counters no longer match the file, and neither
+  accessor can free the entry safely on its own. `AppResult` rather than `Option`
+  is not a `#[must_use]` argument — `Option` carries that attribute too. It is that
+  there are three outcomes and an `Option` holds only two: a residual gap to write,
+  nothing owed (`Ok(FinishedSession::default())`, for a session that never queued
+  anything or has already been finished), and *not now* (`Err`, records still
+  queued). Folding the third into the second is precisely the mistake that would let
+  a close file its row while bytes were still owed.
+- **Decision: refuse while records are queued, and take nothing when refusing.**
+  Queued records still owe their bytes and their gaps, so forgetting the session
+  before a pump would lose both. The check reads `session.records` before anything
+  is taken, which makes "pump, then finish" a safe retry instead of a race with a
+  half-consumed entry. The refusal is per session, so a batch shutdown can finish
+  the sessions that are drained without waiting on the ones that are not.
+- **Decision: a finish is final, and that is a constraint on the writer, not on the
+  queue.** A second finish, or a finish for a session never seen, yields
+  `FinishedSession::default()` — owed nothing, no losses — which is what makes
+  writing one gap twice impossible. The price is that a record arriving after a
+  finish gets a fresh entry with no history and carries no gap, so the writer must
+  finish a session only once that session's capture threads can no longer enqueue.
+  That price is written down as the test `a_record_after_a_finish_starts_a_fresh_entry`
+  rather than as a comment, and `ArchiveWriter::close`'s doc comment now names
+  `finish_session` as the close path so the next slice cannot reintroduce the leak
+  by reaching for `take_pending_gap`.
+- **Deviation from the instruction.** The patch was requested with a 私有 (private)
+  terminal operation. `finish_session` is `pub` instead: with no production caller
+  yet, a private or `pub(crate)` method is `dead_code` under `-D warnings`, and the
+  alternatives were an `#[allow]` bypass marker (forbidden here) or writing the
+  writer (out of scope this round). What holds today is that the method has **no
+  runtime caller** — every call site is a test — not that a `pub` method of a `pub`
+  module is unreachable; it is reachable by definition. The narrowing to
+  module-private is owed the moment the writer becomes its production caller, which
+  is the next slice.
+- **Residual limitation, unchanged from below.** Nothing writes a gap line yet.
+  `pump` is still `todo!`, so the gap's on-disk placement stays pinned in the
+  queue's output and in the still-red
+  `gap_records_sum_to_the_dropped_counters_of_a_closed_archive`.
+- Verification in `apps/desktop/src-tauri`: fmt clean (one rustfmt diff in a new
+  test applied and re-checked), clippy clean under
+  `--all-targets --all-features -- -D warnings`, `cargo test --lib` at
+  `167 passed; 15 failed; 1 ignored` out of 183 — identical in parallel,
+  single-threaded, and under `--all-targets --all-features`. The 15 failures are the
+  same writer `todo!` panics (`enqueue` ×10, `delete` ×4, `read` ×1) and the run
+  holds zero `assertion` lines. The 17 queue tests run focused are
+  `17 passed; 0 failed`. The archive suite is 63 tests, 48 green.
+
+## 2026-08-17 v0.3.0 The Queue Slice: `ArchiveQueue` and the Gap Partition
+
+- Scope: `apps/desktop/src-tauri/src/archive.rs` only. The nine `ArchiveQueue`
+  bodies, the gap carrier the contract needed, five new tests, and one rewritten
+  assertion. Untouched, as instructed: `ArchiveWriter`'s `enqueue`, `pump`, `close`,
+  `close_all`, `read`, and `delete`; the `Storage`-backed `ArchiveIndex`; the
+  commands; the frontend; CI; the release workflow; tags; `.env`. No commit, no push.
+  `lib.rs` is unchanged, so `pub mod archive;` remains the module's only reference in
+  the crate and the feature is still unreachable from the application.
+- **Decision: the gap rides on a wrapper, not on `ArchiveRecord`.**
+  `V0.3.0_PLAN.md:337-341` had left both open; that paragraph now records the
+  resolution and reads at `V0.3.0_PLAN.md:335-357`. `drain` now returns
+  `Vec<QueuedRecord>`, where `QueuedRecord` is `{ record: ArchiveRecord, gap_before:
+  Option<DropCounters> }` (`archive.rs:219`). The alternative — a `gap_before` field
+  on `ArchiveRecord` that the capture side never sets — was rejected for two reasons.
+  The gap describes the hand-off, not the line the child process wrote, so a field
+  capture can set but never should is a field that lies; and `encode_record` writes
+  exactly three keys, so a gap sitting on `ArchiveRecord` would be handed to it and
+  silently discarded, while a caller holding a `QueuedRecord` must reach through
+  `.record` and therefore sees `gap_before` at the point of use. The predicted cost
+  was paid in full and was nothing more: two test call sites gained one level of
+  nesting, asserting the same values.
+- **Decision: one rewritten assertion, and it is stronger than what it replaced.**
+  `every_short_enqueue_sequence_keeps_the_queues_invariants` had required the
+  post-drain `take_pending_gap` to return everything the session lost. That is false
+  under the approved contract — a loss a later record picked up leaves with that
+  record — and it described the merged-gap design the user rejected, so leaving it
+  would have pinned the losing alternative. The replacement compares the whole
+  drained sequence of `gap_before` values against a positional model vector, so the
+  test now checks *where* each run is reported and not only how much was lost. No
+  other existing assertion changed.
+- **Residual limitation.** The queue decides where a gap is reported; nothing yet
+  writes it. `ArchiveWriter::pump` is still `todo!`, so the claim "the gap line
+  stands immediately before the first line that survived the loss" is pinned in the
+  queue's output and in `gap_records_sum_to_the_dropped_counters_of_a_closed_archive`
+  — which is still red at the writer — but is not yet demonstrated end to end in a
+  file on disk. Judge the next slice on that test going green without its assertions
+  being touched.
+- Evidence the new assertions are not vacuous: two mutations were compiled, run, and
+  reverted. Carrying nothing (the merged-gap behavior) and carrying without clearing
+  (double-reporting) each failed four of the five new tests plus the exhaustive one;
+  the exhaustive test caught the second on "the residual is the trailing run, and
+  nothing else". `a_trailing_drop_has_no_record_to_carry_it_and_stays_the_residual`
+  stayed green under both, correctly — it pins the residual half, which neither
+  mutation can reach. Details and the failing traces are in `HANDOFF.md`.
+- Verification after the revert, in `apps/desktop/src-tauri`: fmt clean, clippy
+  clean under `--all-targets --all-features -- -D warnings`, and `cargo test --lib`
+  at `161 passed; 15 failed; 1 ignored` out of 177 — identical in parallel,
+  single-threaded, and under `--all-targets --all-features`. All 15 failures are
+  `todo!` panics in the writer (`enqueue` ×10, `read` ×1, `delete` ×4) and the run
+  holds zero `assertion` lines. The archive suite is 57 tests, 42 green.
+
+## 2026-08-17 v0.3.0 The Drop-Counter Contract Is Corrected (Step 4b Unblocked)
+
+- Scope: the version 2 schema and the documents that describe it. Production code did
+  change — the DDL inside `upgrade_to_version_2` (`storage.rs:715`) is not the text it
+  was, and the pinned `V2_ADDITION` copy matches it — plus one parametrized rejection
+  case removed and four documents updated. What did **not** change: no new function
+  body, no new run path, no part of the queue implementation, no schema version, no
+  version 3 migration, no CI, release, tag, or `.env` file, no commit and no push.
+  This is the correction the section below paused for, and it happened only after the
+  user approved it, because a schema change is one of this project's stop-and-ask
+  lines.
+- The decision, and the alternative it beat. The user answered
+  **「就地改 v2 DDL，不加 v3」**: correct the version 2 DDL in place, keep the schema
+  version at 2, add no version 3 step. The alternative was to treat version 2 as
+  frozen and repair it with an `upgrade_to_version_3` table rebuild. That would be
+  the right move if a version 2 database existed — SQLite keeps a `CHECK` inside the
+  table definition, so a DDL edit cannot reach a table that already exists. Neither
+  verified artifact has one: the two developer databases on this machine and the
+  published `v0.2.1` baseline. That is the scope of the census further down, and it is
+  what makes the in-place edit not merely cheaper but complete for the artifacts that
+  were actually checked.
+- The new constraint is `CHECK (dropped_bytes = 0 OR dropped_lines > 0)`. It states
+  the one direction that is genuinely impossible — bytes cannot be lost without a
+  line, because every archived byte belongs to some line — and says nothing about the
+  other, because a dropped empty line costs `1 line / 0 bytes` and is ordinary data.
+  The old form, `((dropped_lines = 0) = (dropped_bytes = 0))`, collapsed that
+  implication into an equivalence, which is the whole of the bug. Both copies now
+  carry a four-line SQL comment saying so, in English like the rest of the
+  repository, so the next reader does not re-derive it.
+
+- Applied at five sites in one round, because nothing in the crate compares them to
+  each other: the design DDL (`V0.3.0_PLAN.md:634`), the prose invariant restating it
+  (`V0.3.0_PLAN.md:844-846`), the production migration (`storage.rs:715`), the pinned
+  `V2_ADDITION` copy (`storage.rs:1240`), and the `"drop counters agree"` case in
+  `the_archive_index_rejects_impossible_rows`. The migration and the pinned copy are
+  now held to the same rule by two tests that each run against both
+  (`an_archive_row_may_lose_a_line_that_carried_no_bytes` and
+  `an_archive_row_may_not_lose_bytes_without_losing_a_line`, through
+  `create_pinned_version_2_database`), so the next half-applied edit fails instead of
+  drifting.
+- One existing assertion was removed, deliberately and with approval. The
+  `"drop counters agree"` case required
+  `('sess-exited','a.jsonl','complete',NULL,0,0,5,0,10,11)` — five dropped lines, no
+  dropped bytes — to be rejected. That row is five dropped empty lines, which is
+  ordinary data, so the case rested on the same wrong premise as the constraint and
+  could not survive the fix. A comment at `storage.rs:1553` records what stood there
+  and names the two tests that now pin both directions, so the removal reads as a
+  contract change rather than as a test that quietly went missing. It is the only
+  assertion this round touched; nothing was weakened, retargeted, or `#[ignore]`d to
+  reach green.
+- Residual limitation, recorded rather than fixed: nothing in the build compares the
+  plan's DDL text to the crate's. The three-way agreement between `V0.3.0_PLAN.md`,
+  the migration, and `V2_ADDITION` is maintained by hand and by review. Only the last
+  two are pinned against each other, and only through behavior — no test reads DDL
+  text out of `sqlite_master`, which is also why SQL comments could be added inside
+  the table definition without breaking a comparison.
+
+- Verification, in `apps/desktop/src-tauri`: `cargo fmt --all -- --check` clean;
+  `cargo clippy --all-targets --all-features -- -D warnings` clean with zero warnings
+  and no `allow` added; `cargo test --lib` at `150 passed; 21 failed; 1 ignored;
+  0 measured; 0 filtered out` out of 172, identical in parallel and with
+  `--test-threads=1`. The change is visible as exactly one test flipping — the
+  previous `149 passed; 22 failed; 1 ignored` minus the storage failure that had been
+  quoting the old constraint verbatim. The other 21 reds are unwritten step 4b bodies
+  (`archive.rs:1098` ×6, `:1355` ×10, `:1410` ×1, `:1420` ×4, every one a `todo!`),
+  and the suite output holds zero `assertion`, `left ==`, or `left !=` lines. Module
+  counts are unchanged at archive 52, storage 24, processes 12, because a
+  parametrized case was removed, not a test.
+- Safety was established before the edit rather than inferred from the result: all
+  four `INSERT INTO run_log_archives` sites and every row they carry were enumerated,
+  and none writes bytes without a line, so no previously accepted row became
+  rejected. The five storage tests touching the changed DDL also pass individually
+  under `--exact`, so none is riding on another test's side effect.
+- The census that licenses the in-place fix, re-taken on 2026-08-17 from the SQLite
+  header (bytes 60..63 of page 1, no connection opened): both developer databases,
+  under `%LOCALAPPDATA%\com.abysswhale.runcove` and `...com.abysswhale.runcove.qa`,
+  are at `user_version = 1`, and neither directory holds a `-wal` or `-shm` file, so
+  the header is authoritative rather than a stale page. The version 2 code is
+  unreleased and uncommitted, and the published `v0.2.1` baseline never mentions
+  `run_log_archives`, so no v0.2.1 install can hold a version 2 database either.
+  Stated at its true scope: **the verified local developer databases and the published
+  baseline have no version 2 database.** Machines that were never measured are not
+  covered, which is exactly why the rebuild recipe is kept in `HANDOFF.md` — for this
+  working tree copied elsewhere and run there.
+- A separate, smaller pass in the same round repaired stale line-number citations in
+  `V0.3.0_PLAN.md` — some shifted by this round's four added comment lines per DDL
+  copy, some already stale from the blocker round, one by 128 lines. The
+  migration-test list now names all nine tests instead of listing bare offsets, and
+  the note above it says outright that the names are authoritative and the numbers
+  rot with each slice. Two factual errors in the plan went with it, both exposed by
+  this round's own evidence: the data directory does not hold `-wal` and `-shm`
+  companions (`Storage::open` never sets `journal_mode`), and
+  `the_archive_index_rejects_impossible_rows` now carries eight cases rather than
+  nine. Neither correction changes a design decision.
+- Second decision, recorded and **not implemented**: the gap partition. The user
+  chose **「gap 挂到下一条记录上」** over the recommendation to merge. Pending drop
+  counters attach to the next accepted record for that session, so `take_pending_gap`
+  returns only the trailing residual, which the writer flushes at close. This buys
+  exact placement of gap records in the archive file, at the price of a carrier field
+  on the queued record and a rewritten assertion at `archive.rs:3369`. It is the
+  queue slice's first move, and the slice has not started: the user asked to stop for
+  review once the schema correction landed.
+
+## 2026-08-16 v0.3.0 Step 4b Paused (A Wrong Drop-Counter Contract In The Version 2 Schema)
+
+- Scope: tests and documentation only. Seven tests were added across three files,
+  four documents were updated, and nothing else changed — no production DDL, no
+  `CURRENT_SCHEMA_VERSION`, no queue or writer body, no CI, release, tag, or `.env`
+  file, no commit and no push. The round exists because the user found a defect in
+  the *design* before the queue was written, and the cheapest place to record a
+  design defect is a failing test that says what the code should do.
+- The defect. The version 2 `run_log_archives` table ends with
+  `CHECK ((dropped_lines = 0) = (dropped_bytes = 0))`. Read literally it says: a
+  session has lost lines if and only if it has lost bytes. That is a guess about the
+  data, and the guess is wrong, because a line and its bytes are not the same
+  quantity. `capture_stream` splits on `\n` and emits an event per line; a lone
+  newline is a line whose text is empty. Traced by hand and then pinned by test,
+  input `"\n"` produces exactly one event with `line == ""`, and `"a\n\nb\n"`
+  produces `["a", "", "b"]`. Drop one empty record and the honest counters are
+  `dropped_lines = 1, dropped_bytes = 0`, which the constraint refuses. The archive
+  would have failed to record a loss it was built to record — `close` would have
+  written a row the database rejects, on data the queue is specified to produce.
+- The correct rule is one-directional. Bytes cannot be lost without a line, because
+  every byte of archived text belongs to some line, so `dropped_bytes > 0` with
+  `dropped_lines = 0` is genuinely impossible and must stay rejected. The reverse is
+  ordinary. The original constraint collapsed an implication into an equivalence,
+  which is the whole bug; it is the same shape of error as writing `a == b` where
+  the domain only justifies `b != 0 -> a != 0`.
+- A knock-on correction to an earlier note: the rejection case labelled
+  `"drop counters agree"` in `the_archive_index_rejects_impossible_rows`, which
+  pins `5 lines / 0 bytes` as impossible, is not impossible data. It is five dropped
+  empty lines. That case was written against the same wrong premise as the
+  constraint, and it will have to go when the constraint is fixed.
+- No analogous defect exists for `line_count` and `byte_size`. Their `CHECK`s are
+  independent (`>= 0` each), and an archive of five empty lines still has a non-zero
+  `byte_size` because each stored record is a JSON object with a timestamp and a
+  stream field around the empty text. So the archive's own counters cannot reach the
+  `n lines / 0 bytes` shape that the drop counters reach naturally.
+- The defect has three copies, and nothing was comparing them. `V0.3.0_PLAN.md:598`
+  holds the design, restated in prose at `V0.3.0_PLAN.md:772-773`;
+  `storage.rs:711` is the production migration; `storage.rs:1232` is the
+  `V2_ADDITION` constant whose stated purpose is that "drift between the two fails a
+  test instead of silently redefining the schema". That purpose was only half met:
+  `V2_ADDITION` had two users, both checking version handling
+  (`a_version_2_database_opens_and_only_a_higher_version_is_rejected`), and no test
+  compared its text or its behavior to the migration's. A fix applied to production
+  and not to the pinned copy would have gone unnoticed. Both new schema tests
+  therefore run twice — once against a database migrated by `Storage::open`, once
+  against one built straight from `V2_ADDITION` through the new
+  `create_pinned_version_2_database` helper — so a half-applied correction fails.
+- The seven tests, by what they require and where they stop today:
+  - `a_lone_newline_is_captured_as_one_empty_log_line` (`processes.rs:1104`) —
+    **green**, and expected to be. It is a control test: it establishes the premise
+    the whole blocker rests on, so a future change to `capture_stream` that stopped
+    emitting empty lines would show up as a failing premise rather than as silent
+    dead weight in the schema.
+  - `an_archive_row_may_lose_a_line_that_carried_no_bytes` (`storage.rs:1592`) —
+    **red on the constraint**, with the panic message quoting it verbatim:
+    `CHECK constraint failed: (dropped_lines = 0) = (dropped_bytes = 0)`. It requires
+    both `1 line / 0 bytes` and `5 lines / 0 bytes`.
+  - `an_archive_row_may_not_lose_bytes_without_losing_a_line` (`storage.rs:1638`) —
+    **green**, and it must remain green after the fix. Its job is to stop the
+    correction from over-shooting into "no relationship at all": it refuses
+    `0 lines / 40 bytes` and a negative count in either column.
+  - `dropping_an_empty_line_counts_one_line_and_no_bytes` (`archive.rs:3153`) —
+    **red at `todo!`** in `ArchiveQueue::new` (`archive.rs:1098`). It requires
+    `DropCounters { lines: 1, bytes: 0 }` and the user-visible
+    `[RunCove: dropped 1 line / 0 bytes]`. Its bounds force the refusal through the
+    *record* bound on purpose: an empty record consumes no bytes, so a byte bound
+    could never reject it, and a test that tried would be testing nothing.
+  - `the_queue_counts_utf8_bytes_and_not_characters` (`archive.rs:3183`) — **red at
+    the same `todo!`**. It is written with `\u{...}` escapes rather than literal
+    characters so the byte counts cannot depend on how this file is encoded, and it
+    asserts its own premise first. A queue that counted characters fails it in two
+    independent places, which is deliberate: `queued_bytes()` would report 1 for
+    a three-byte character, and a record that must be refused would be accepted.
+  - `every_short_enqueue_sequence_keeps_the_queues_invariants` (`archive.rs:3232`)
+    and `a_pending_gap_is_taken_once_and_the_cumulative_total_is_never_cleared`
+    (`archive.rs:3388`) — both **red at the same `todo!`**.
+- The exhaustive test is a deliberate substitute for a property-test dependency, not
+  a poor imitation of one. `proptest` would bring a new crate, a random seed, and a
+  shrinking step whose output is a fresh puzzle every failure; a full enumeration of
+  a deliberately tiny space brings none of that and fails identically every time. It
+  walks all `4^6 = 4096` sequences of six records over a four-symbol alphabet — an
+  empty line and a four-byte line on one session, a three-byte multi-byte character
+  on a second, a four-byte line on a third — against bounds `{2, 4, 3, 8}` chosen so
+  that every one of the four bounds is met exactly by some sequence and exceeded by
+  another. Each step is compared to a model the test recomputes from the records it
+  believes were kept, and every failure message carries a readable trace such as
+  `[A:abcd,B:han,A:empty,...] step 3`, so a red result names the sequence instead of
+  a seed. Cost is roughly 25,000 enqueues, well under a second.
+- What it pins: no accepted record puts any per-session or total record or byte count
+  over its bound; equality with a bound is allowed and only the *incoming* record is
+  ever refused, which is checked by comparing `queue.len()` with the model at every
+  step so an implementation that evicted something already queued would fail;
+  `drain` returns every kept record in global arrival order and resets `len`,
+  `queued_bytes`, and `is_empty`; a pending gap is taken once and `None` after, while
+  the cumulative `dropped` total survives both the take and the drain; and `dropped`
+  equals the line count and summed UTF-8 text length of exactly the refused records.
+- One thing was left unpinned on purpose. `V0.3.0_PLAN.md` promises one `system` gap
+  record per *contiguous* gap, but it never settles how a drop → accept → drop run
+  partitions when no take intervenes, and `take_pending_gap` returns a single
+  `Option<DropCounters>` per session, so the API has nowhere to hold two. Rather than
+  invent a partition and freeze it in a test, both new tests assert only that a take
+  returns everything lost since the previous take and that gaps sum to the cumulative
+  total, which is what `V0.3.0_PLAN.md:319` already requires. If the queue's author
+  later needs a different partition, these tests do not stand in the way.
+- A contradiction was left standing in the test suite, on instruction and on
+  purpose. No existing assertion was deleted, weakened, or retargeted, so
+  `storage.rs` now contains two tests that disagree about the same row:
+  `the_archive_index_rejects_impossible_rows` requires `5 lines / 0 bytes` to be
+  rejected, and `an_archive_row_may_lose_a_line_that_carried_no_bytes` requires it to
+  be accepted. Measured, not predicted: the old one passes today, the new one fails.
+  No constraint can satisfy both, so the correction must also delete the
+  `"drop counters agree"` case — an edit to an existing assertion, which is exactly
+  the kind of change that should be approved deliberately rather than slipped in
+  beside a test-only round.
+- Verification, in `apps/desktop/src-tauri`: fmt clean, clippy clean at
+  `--all-targets --all-features -- -D warnings` with zero warnings and no `allow`
+  added, and `cargo test --lib` at `149 passed; 22 failed; 1 ignored; 0 measured;
+  0 filtered out` out of 172 — the same three numbers single-threaded and under
+  `--all-targets --all-features`. The previous checkpoint was `147 passed; 17 failed;
+  1 ignored` out of 165, so the arithmetic closes exactly: seven tests added, two
+  green, five red, nothing else moved. Module counts are archive 52, storage 24,
+  processes 12; four archive tests are `#[cfg(windows)]` and nothing added here is
+  platform-gated, so a non-Windows host runs 168.
+- Failures were classified by panic site rather than by reading names:
+  `archive.rs:1098` ×6, `archive.rs:1355` ×10, `archive.rs:1410` ×1,
+  `archive.rs:1420` ×4, `storage.rs:1620` ×1. The captured output contains zero lines
+  matching `assertion`, `left ==`, or `left !=`. That matters more than the failure
+  count: every red test stops at an unwritten body or at the constraint under
+  discussion, so none of them is making a wrong claim about behavior that exists.
+- Two small things worth keeping. Clippy's `int_plus_one` rejected the model's
+  `count + 1 <= bound`, which had been written that way to read in parallel with the
+  byte lines beside it; the resolution was `count < bound` plus a comment explaining
+  both readings, not an `allow`. And `cargo fmt --all` reflowed exactly one
+  `assert_eq!` in the new gap test and touched nothing else, confirmed by re-running
+  `--check` afterwards.
+- Residual limitation, and the reason this round stops here: the correction is a
+  schema change, so it waits for the user. When authorized it has five parts, and
+  omitting any one of them leaves the repository inconsistent — the plan at `:598`
+  and its prose at `:772-773`, the production DDL at `storage.rs:711`, the pinned
+  `V2_ADDITION` at `storage.rs:1232`, the `"drop counters agree"` case, and a
+  decision about `CURRENT_SCHEMA_VERSION`. On the last one: v0.3.0 is unreleased, so
+  no user database is at version 2 and correctness needs no version 3 migration —
+  but SQLite stores a `CHECK` inside the table definition, so any *developer*
+  database already migrated by an earlier build keeps the wrong constraint however
+  the DDL reads. Editing the DDL alone does not reach it; that database must be
+  discarded by hand or the table rebuilt.
+
+## 2026-08-16 v0.3.0 Step 4b, Third Slice (Begin And The Open-Session Gate)
+
+- Scope: `ArchiveWriter::begin`, `ArchiveWriter::is_open`, and the writer state those
+  two need — the private `OpenArchive` slot, the `open: Mutex<BTreeMap<String,
+  OpenArchive>>` map, and the `fs` and `index` handles the writer now keeps instead of
+  dropping after the sweep. The queue, `enqueue`, `pump`, `close`, `close_all`, `read`,
+  `delete`, quota eviction, the `Storage`-backed `ArchiveIndex`, the commands, and the
+  frontend are untouched and still `todo!`. Evidence, from
+  `apps/desktop/src-tauri`: fmt clean, clippy clean with zero warnings,
+  `cargo test --lib --all-features -- --test-threads=1` at `147 passed; 17 failed;
+  1 ignored; 0 measured; 0 filtered out` out of 165, with the default parallel run and
+  `--all-targets --all-features` reporting the same three numbers and no failure
+  outside `archive::tests`. The archive suite is 48 tests, 31 green / 17 red, up from
+  24 / 19. All 18 tests this slice could affect were confirmed alone under
+  `-- --exact`, every one of the 17 remaining failures is a `todo!` panic, and no run
+  contains an assertion line.
+- `begin` is three phases, and the reason is requirement 8, not tidiness: holding the
+  open-session lock across `create_new` and `insert_writing` would put a SQLite write
+  inside a lock that every capture thread wants. So phase one validates the id and
+  resolves the path while touching nothing, phase two takes the session's slot under
+  the lock and releases it, and phase three creates the file and inserts the row with
+  no lock held, re-taking it only to store the handle or drop the slot.
+- The slot is what makes concurrency deterministic instead of lucky. It is inserted as
+  `OpenArchive { file: None }` before the file exists, so a second `begin` for the same
+  session finds the key already present and loses immediately. That `None` window is
+  also the only state a concurrent caller can observe, and only to lose, which is why
+  the two refusals read differently: "already has an open archive" when a handle is
+  there, "is already opening its archive" when it is not. Reading `file.is_some()` for
+  that message is also what keeps the field from being `dead_code` under `-D warnings`
+  before `pump` exists to write through it — no `allow` was needed.
+- Failure cleanup order is forced by Windows: the handle is dropped before
+  `remove_file`, because this process's own open handle blocks a delete. If the delete
+  fails too, `begin` still returns an error, the slot is still released, `is_open` is
+  false, the total does not grow, and the message says the empty file is left for the
+  next startup sweep rather than pretending it is gone. That is the same orphan the
+  sweep already handles, so the two failure modes compose instead of leaking.
+- `begin` deliberately does not consult the quota, and the doc comment says why: a new
+  archive is an empty file, so there is nothing yet to weigh against a cap. The caps
+  and a `QuotaTotal::Unavailable` total refuse the first *record*, in `pump`. This was
+  settled by reading `an_unavailable_total_stops_the_archive_instead_of_growing_it`,
+  which arranges an unavailable total and then requires `begin` to succeed — guessing
+  the other way would have made that test fail for the wrong reason.
+- `is_open` is true from slot-taking until close or failure, which deliberately covers
+  the instant before the file exists, because `delete` must refuse a session that is
+  being opened. A session the index knows about but this writer never opened is not
+  open; `is_open` answers about this writer's live sessions, not about the database.
+
+- Two of the 25 tests that had been waiting on `initialize` went green here:
+  `a_refused_writing_row_leaves_no_orphan_file_behind` and
+  `an_orphan_left_by_a_failed_cleanup_is_deleted_by_the_next_sweep`. Eleven advanced to
+  a body the boundary excluded — ten to `ArchiveWriter::enqueue`, and
+  `deleting_an_archive_is_refused_while_its_writer_is_open` to `delete`. That is the
+  measurable result the boundary allows, and it is the same standard the second slice
+  was judged by: which named tests go green, and where each remaining one stops.
+- The 17 remaining failures panic at four sites, each read to confirm the line:
+  `archive.rs:1098` `ArchiveQueue::new` ×2, `:1355` `enqueue` ×10, `:1410` `read` ×1,
+  `:1420` `delete` ×4. Fifteen `todo!` bodies remain, down from 17.
+- Five tests were added, all for requirement 7, which a `.begin(` / `.is_open(` grep
+  showed no existing test covered. No existing assertion was touched.
+  - `beginning_a_session_this_build_could_not_have_generated_touches_nothing` — eight
+    bad ids: empty, `.`, `..`, a non-UUID, an uppercased UUID, one character short, one
+    long, and an underscored one. Each errors, `is_open` stays false, and afterwards
+    the directory is empty, the filesystem log has no removal, the index log has no
+    call at all, there is no row, and the total is still `Known(0)`. Validation
+    genuinely precedes any effect, rather than being cleaned up afterwards.
+  - `beginning_a_session_whose_file_already_exists_refuses_and_keeps_the_file` — the
+    file is planted after `initialize`, so the sweep cannot have seen or deleted it.
+    `create_new` fails, the planted bytes are byte-for-byte intact, and no index call
+    happens, which is the assertion that `create_new` is the guard rather than a
+    `remove_file`-then-recreate.
+  - `beginning_the_same_session_twice_is_refused_and_keeps_the_first_archive` — the
+    second call errors, the first archive stays open, its row stays `writing` with the
+    first `started_at`, and the index call log does not grow.
+  - `two_threads_beginning_the_same_session_leave_exactly_one_open_archive` — two
+    threads share the writer through an `Arc` and meet at a `Barrier`. Exactly one call
+    is `Ok`, and there is exactly one `insert_writing:` call, one row, one file, and no
+    removal. No assertion names which thread wins, so the test cannot pass because an
+    interleaving happened to be favorable; it was also repeated 20 times alone, 20 ok /
+    0 failed. `ArchiveWriter` is `Send + Sync` by construction, which is what lets the
+    test share it: `Arc<dyn ArchiveFs>` and `Arc<dyn ArchiveIndex>` are both, and
+    `Box<dyn ArchiveFile>` is `Send`.
+  - `is_open_is_false_for_a_session_this_writer_never_opened` — a `complete` archive
+    from an earlier run is on disk and in the index; `is_open` is false for it, for an
+    unopened id, and for two invalid ids, and true only for the session this writer
+    actually began.
+- One regression this slice caused and fixed, recorded because reading the diff would
+  not explain it: a placeholder-anchored edit used `ArchiveWriter::enqueue`'s doc
+  comment as its anchor and deleted those three lines. `cargo fmt --all -- --check`
+  caught it (exit 1, diff at `src\archive.rs:1347`), the original text was restored
+  verbatim, and fmt returned to exit 0. Because the fix moved panic line numbers by two
+  or three, the whole suite was re-run to re-record them instead of reusing the earlier
+  values; the four sites above are the post-fix numbers.
+- The root `runcove` crate was not touched and was re-verified anyway: fmt clean,
+  clippy clean, `cargo test --all-targets` green (12, 0, 0, 10, 16). The frontend half
+  of the matrix — `npm run lint`, `npm run typecheck`, `npm test -- --run`,
+  `npm run build`, the Playwright E2E, and `cargo tauri build` — was not run, because no
+  frontend file changed in this slice. The full matrix is still required and is
+  scheduled for plan step 7.
+- Nothing was committed, pushed, tagged, or released; no CI, release, tag, or `.env`
+  file was touched; and `pub mod archive;` in `lib.rs` is still the module's only
+  reference in the crate, so the feature remains unreachable from the application.
+
+## 2026-08-16 v0.3.0 Step 4b, Second Slice (Initialize And The Startup Sweep)
+
+- Scope: `ArchiveWriter::initialize`, the startup sweep behind it, `archive_dir`,
+  and `total_bytes`. The queue, the write path, close, quota eviction, the
+  `Storage`-backed `ArchiveIndex`, the commands, and the frontend are untouched and
+  still `todo!`. Evidence, from `apps/desktop/src-tauri`: fmt clean, clippy clean
+  with zero warnings, `cargo test --lib --all-features -- --test-threads=1` at
+  `140 passed; 19 failed; 1 ignored; 0 measured; 0 filtered out` out of 160, and
+  the default parallel run at the same numbers with no failure outside
+  `archive::tests`. The archive suite is 43 tests, 24 green / 19 red, up from
+  14 / 27. Each of the eight newly green tests also passes alone under
+  `-- --exact`, every one of the 19 remaining failures is a `todo!` panic that was
+  confirmed alone, none of them stops at `initialize` any more, and the run
+  contains zero assertion lines.
+- Eight of the 25 tests that were waiting on `initialize` could go green in this
+  slice; the other 17 assert on `begin`, `pump`, `close`, `read`, `delete`, or
+  eviction, which the authorized boundary excludes. They now stop at their own
+  subject instead — 15 at `begin`, 1 at `read`, 1 at `delete` — which is the
+  measurable result the boundary allows. Two of them assert sweep output before
+  reaching their `todo!`, and those assertions run and hold: the total cap test
+  sees `Known(800)` from both `measured_bytes` and `total_bytes()`, proving nothing
+  is evicted at initialization, and the unavailable-total test sees `Unavailable`.
+- Only two failures stop the sweep, and both mean it has nothing to work with: an
+  index that cannot be read at all, and a directory that cannot be listed at all.
+  Creating the directory is the third failure that stops `initialize` itself. Every
+  other failure belongs to one entry or one row, and is reported as an anomaly and
+  stepped over, because one file the filesystem refuses must not cost every other
+  row its repair.
+- An entry is classified by its name before anything else. A name this build's
+  `archive_file_name` could not have produced is reported once and otherwise left
+  entirely alone — not measured, not deleted, not read — whether or not the
+  filesystem could describe it. `is_archive_file_name` and the sweep now share
+  `archive_file_stem`, so the rule that admits a name and the id that name yields
+  cannot drift apart into two rules.
+- A row's `file_name` is checked against the name its own session generates before
+  the row is acted on, and its status is parsed before anything is decided. The
+  order matters: parsing second is what keeps a row whose status this build does not
+  know — one a newer build wrote — from being mistaken for a session whose file has
+  gone missing. A row that fails either check is reported and left byte-identical.
+- A `complete` or `partial` row whose file is still there is never rewritten. Its
+  numbers were final when it closed, and re-measuring would replace a fact with a
+  guess. Only a `writing` row is repaired, to `partial` / `interrupted`, and it is
+  repaired from the file rather than from itself: the row stopped being updated the
+  moment the run died and the file did not, so the file's length and its recounted
+  lines win. When the name is taken by something this build did not write the repair
+  records zero bytes and zero lines; when the entry cannot be measured the row keeps
+  its own numbers, which are then the only ones anyone has. Dropped-line and
+  dropped-byte counters are preserved in every case.
+- A file is deleted as an orphan only when no row at all exists for its session —
+  whatever such a row would have said. A file some row still names is kept even when
+  the sweep refused to act on that row, because reporting a strange row costs a line
+  in a log and guessing at one costs a user their log. A delete the filesystem
+  refuses is an anomaly, and those bytes still count towards the quota, because they
+  are still on the disk.
+- An index write that fails during the sweep is reported and stepped over. A repair
+  that fails leaves the row `writing`, which is exactly the state this sweep
+  repairs, so the next startup tries once more; nothing is retried in a loop and
+  nothing is lost.
+- One entry that nobody can size and no row remembers makes the whole total
+  `Unavailable` rather than a smaller number. `Unavailable` already means "no room",
+  so the archive stops growing instead of growing against a total it had to guess
+  at: that total feeds the only cap standing between an opt-in feature and a full
+  disk.
+- Anomaly text may echo an entry name, because the OS listing yields a single path
+  component, and never a row's `file_name`, because that is exactly the column that
+  may be a path. A row is labelled by its session id only when the id is one this
+  build generates, and by a fixed phrase otherwise.
+- The writer holds `archive_dir` and the measured `total`, and nothing else. The
+  filesystem and index handles are used by the sweep and dropped rather than
+  stored, and `bounds` and `limits` are accepted and discarded, because a private
+  field no body reads is `dead_code` under `-D warnings` — every field arrives with
+  its first reader, while the signature stays pinned so it does not move when those
+  readers land.
+- Two tests were added against code that already existed, with no growth in
+  implementation scope. `the_most_severe_reason_is_the_documented_order_over_every_pair`
+  checks all 64 pairs against the documented order and its symmetry via an
+  exhaustive-match rank helper, so the private `severity` numbers cannot move
+  without the documented order moving too, and a ninth reason cannot be added
+  without being placed in the order. `a_carriage_return_in_the_text_never_becomes_a_line_of_its_own`
+  pins that `\r`, `\r\n`, `\n`, and `NUL` inside a captured line stay inside the JSON
+  string and out of the file's line structure, which is what keeps one record one
+  line.
+- The intermittent port and timing failures recorded in earlier sessions did not
+  reproduce today, in either the parallel or the single-threaded run. Nothing was
+  changed to address them; they remain out of this slice's scope.
+
+## 2026-08-16 v0.3.0 Step 4b, First Slice (Leaf Behavior Only)
+
+- Scope: the pure, leaf-level half of `archive.rs` — the enum mappings, the file
+  name and path rules, the record and gap encoding, the documented default bounds,
+  and `RealArchiveFs`. The writer, the sweep, the queue, and the quota are
+  untouched and still `todo!`. Evidence, from `apps/desktop/src-tauri`: fmt clean,
+  clippy clean with zero warnings, `cargo test --lib --all-features` at
+  `130 passed; 27 failed; 1 ignored; 0 measured; 0 filtered out` out of 158. The
+  archive suite is 14 green / 27 red, up from 1 / 40. Each newly green test also
+  passes alone under `-- --exact`, and all 27 remaining failures are `todo!`
+  panics — 25 at `ArchiveWriter::initialize`, 2 at `ArchiveQueue::new` — with zero
+  assertion lines anywhere in the run.
+- The id rule checks the shape and not the version nibble. `is_generated_session_id`
+  requires 36 characters, hyphens at 8/13/18/23, and lowercase hex elsewhere, which
+  is exactly what `storage::new_id` emits. The version and variant nibbles are
+  deliberately not pinned: the shape is what makes a name one harmless path
+  component — it admits no separator, colon, dot, space, or `..` — so pinning adds
+  nothing, while it would turn every archive already on disk into an unreadable
+  orphan the day the id generator moved to another UUID version. All 28 names in
+  `rejected_file_names` are refused by the shape rule alone, so no subtractive
+  blocklist exists in the code.
+- `most_severe` is a total order over all eight reasons, not over three. The plan
+  only ranks `write-error` > `quota-exceeded` > `queue-overflow`, which are the
+  reasons a session can accumulate while writing. Ranking only those would leave the
+  answer for any other pair dependent on argument order, so all eight are ranked and
+  the tie-free order is documented on the private `severity` helper: what happened to
+  the archive outranks what RunCove or the user chose to do with it.
+- `RealArchiveFs::create_new` is unbuffered. `WRITE_BUFFER_BYTES` belongs to
+  `ArchiveWriter`, which owns every open file, so buffering inside the seam would
+  double-buffer in production and make the shipped seam behave differently from the
+  double the tests substitute. The constant stays unused until the writer lands.
+- Error messages echo a session id, never a `file_name` from the database. A session
+  id is short, ours, and the thing a user needs to identify the archive; it is
+  formatted with `{:?}` on the one path where it may not have passed the shape rule
+  yet. A rejected `file_name` is exactly the value that may itself be a path, so the
+  message states the rule instead of quoting it back.
+- `RealArchiveFs::list_dir` turns a single entry's failed metadata read into
+  `Err(UnreadableEntry)` inside the vector and keeps going, reserving `Err` for a
+  directory that could not be listed at all. The `TestFs` double reaches the same
+  outcome by injecting on the entry's name, so the shipped implementation is the one
+  holding to the documented contract rather than inheriting it from the double.
+
+## 2026-08-16 v0.3.0 Archive Test Hardening (Still Step 4a)
+
+- Two review batches took the archive suite from 27 tests to 41 without writing a
+  line of production behavior. Every body in
+  `apps/desktop/src-tauri/src/archive.rs` is still `todo!("step 4b: ...")` and
+  `pub mod archive;` is still the module's only reference in the crate, so nothing a
+  user can reach changed. The batches were reviewed separately: nine tests in the
+  first, five in the second.
+- Evidence, from `apps/desktop/src-tauri`: `cargo fmt --all -- --check` clean,
+  `cargo clippy --all-targets --all-features -- -D warnings` clean with zero
+  warnings, and `cargo test --lib --all-features` at `117 passed; 40 failed;
+  1 ignored; 0 measured; 0 filtered out` out of 158 run. `--list` reports 41
+  `archive::tests` entries, so the archive suite is 40 red and 1 green. All 40
+  failures panic at a `todo!("step 4b: ...")`; none is a failing assertion. The one
+  green test is `the_test_filesystem_reports_a_link_as_a_reparse_point`, the test
+  filesystem's own control, and it is supposed to pass. The group list and the body
+  each test reaches are in `V0.3.0_PLAN.md` → Verification.
+- Twenty-five of the 40 still stop at `ArchiveWriter::initialize`, so 4b is judged
+  on each test going green individually rather than on the failure count. The other
+  fifteen reach their own subject, which is what makes a first slice of 4b
+  measurable at all.
+- Why the suite grew, stated plainly so the count is not mistaken for padding. Each
+  new test names a way the archive could have been wrong: a row naming another
+  session's file; an index write refused while a file already exists; an orphan left
+  by a failed cleanup; a reparse point measured into the quota or read as an
+  archive; an entry whose metadata the filesystem refuses; an orphan whose delete
+  is refused; a directory total that cannot be established; and `RealArchiveFs`
+  never having been executed by any test.
+- Four decisions this round settled, all now in `V0.3.0_PLAN.md`:
+  - Read and delete stay keyed by `session_id`, and a row is accepted only when its
+    `file_name` is the name that same session generates. Passing the name rule is
+    necessary and not sufficient — otherwise one row could serve or delete another
+    session's archive, which is the name rule's own failure one level up. Reviewed
+    and kept rather than reverted.
+  - A single entry the filesystem refuses is data, not an error. `list_dir` returns
+    one result per entry, so one file another process holds exclusively becomes an
+    anomaly the sweep reports and does not stop it; only a directory that cannot be
+    listed at all is an error.
+  - The measured quota total is known or unavailable, and unavailable means "no
+    room". Under-counting a hard byte cap is how a tool fills someone's disk, so the
+    archive refuses to grow a directory it cannot measure. It is not a fatal
+    initialization failure and not a new row state: a session that tries to write
+    closes `partial` / `quota-exceeded`, which is the only truthful reason the
+    version 2 `CHECK` admits.
+  - What each entry contributes to the total: an ordinary file its own length; a
+    reparse point nothing; an unreadable entry with a row that row's last known
+    `byte_size`; the same entry with no row nothing measurable, making the total
+    unavailable; an orphan whose delete was refused its own length, because those
+    bytes are still on the disk. "Definitely not our file" and "could not be read"
+    are deliberately different rules, and the reparse-point test seeds a non-zero
+    `byte_size` so an implementation cannot satisfy both with one branch.
+- A test double that classified entries differently from the real filesystem would
+  make every sweep test pass for the wrong reason, and until this round the double
+  was the only implementation any test had executed. `RealArchiveFs` and the double
+  are now compared over the same directory, entry by entry, for an ordinary file, a
+  nested directory, a file symlink, and a directory symlink. Residual limit,
+  recorded rather than papered over: no non-name-surrogate reparse point — cloud
+  placeholder, dedup stub, `AppExecLink` — can be created through `std`, so those
+  rest on both implementations reading `FILE_ATTRIBUTE_REPARSE_POINT` from the file
+  attributes instead of `FileType::is_symlink`, which is true only for name
+  surrogates. `list_dir` also had to promise ascending name order for the
+  comparison to be an equality.
+- Four of the 41 tests are `#[cfg(windows)]`. On a non-Windows host the archive
+  suite is 37 tests with none green, because the one green test is Windows-only. CI's
+  `desktop` job is windows-latest, so all 41 compile and run there.
+- Test boundaries held: every test works inside a `tempfile::TempDir`, no archive
+  test opens a database, the real application data directory is never opened, and no
+  test sleeps. Failure injection is by call count or by entry name, never by timing.
+- Working-tree scope is still the same nine paths, and nothing was committed,
+  pushed, tagged, or released. No CI or release file was touched and no
+  software-copyright application material was produced.
+
+## 2026-08-15 v0.3.0 Archive Red Tests (Step 4a)
+
+- Step 4 was split: 4a writes the archive API surface and its red tests, 4b writes
+  the behavior after the user reviews the signatures. The reason for a split at all
+  is that a Rust test cannot run in a crate that does not compile, so the API has
+  to exist before the tests can. Every body in
+  `apps/desktop/src-tauri/src/archive.rs` is `todo!("step 4b: ...")`, and the
+  `pub mod archive;` line in `lib.rs` is the module's only reference in the crate,
+  so nothing a user can reach changed.
+- Evidence, from `apps/desktop/src-tauri`: `cargo fmt --all -- --check` clean,
+  `cargo clippy --all-targets --all-features -- -D warnings` clean with zero
+  warnings, `cargo test --all-targets` at `116 passed; 27 failed; 1 ignored;
+  0 measured; 0 filtered out` for the lib target out of 144 run and
+  `0 passed; 0 failed` for `main.rs`. All 27 failures are `archive::tests::*`,
+  every one at a `todo!("step 4b: ...")`, and none passes. The full name list with
+  the body each test reaches is in `V0.3.0_PLAN.md` → Verification.
+- Fourteen of the 27 stop at `ArchiveWriter::initialize`, the first line of their
+  arrangement, so their later assertions are written but not yet exercised. 4b is
+  judged on each test going green individually, not on the failure count reaching
+  zero.
+- Two lint facts decided the shape of the file, and both were confirmed by probe
+  rather than recalled. A `pub` item inside a private module, returned by a `pub fn`
+  in a `pub mod`, does not trigger `private_interfaces` — so the module can be `pub`
+  and every item in it is a dead-code root, which is why an unreached constant or
+  method is not a warning under `-D warnings`. A private field no body reads *is*
+  dead code and a derived `Debug` does not excuse it — so the stub structs are
+  fieldless and the state 4b gives them lives in their doc comments.
+  `#[allow(dead_code)]` was rejected as exactly the bypass marker `CLAUDE.md`
+  forbids, and `#[expect(dead_code)]` needs Rust 1.81 against a declared 1.77.
+- Four things the tests decided that the plan had left open, all now written into
+  `V0.3.0_PLAN.md`: the gap line is singular-aware
+  (`[RunCove: dropped 1 line / 1 byte]`); `QueueBounds` and `QuotaLimits` are
+  parameters with documented defaults, so an overflow or eviction test costs a few
+  hundred bytes instead of 200 MiB; the symlink-refusal test is `#[cfg(windows)]`
+  and needs an elevated shell or Developer Mode, which CI's windows-latest runner
+  has; and the write-failure test enqueues a record larger than
+  `WRITE_BUFFER_BYTES`, because with a 64 KiB buffer a short record would not reach
+  the file until close and the injection would fire at the wrong moment.
+- No archive test opens a database. The index seam is a recording in-memory double,
+  so the tests need only a `tempfile::TempDir`; the real application data directory
+  is never opened. The `Storage`-backed `ArchiveIndex` is deferred to 4b, because a
+  `pub(crate)` adapter that only tests use is dead code in the library build and
+  would duplicate SQL that belongs in `storage.rs`.
+- Working-tree scope is now nine paths: modified `AGENTS.md`, `HANDOFF.md`, this
+  file, `apps/desktop/src-tauri/src/lib.rs`,
+  `apps/desktop/src-tauri/src/models.rs`,
+  `apps/desktop/src-tauri/src/storage.rs`, plus untracked `CLAUDE.md`,
+  `V0.3.0_PLAN.md`, and `apps/desktop/src-tauri/src/archive.rs`. Nothing was
+  committed or pushed, no CI/release file, tag, or remote state was changed, and no
+  software-copyright application material was produced.
+
+## 2026-08-15 v0.3.0 Scope Approval And Schema Migration
+
+- Approved scope for v0.3.0: the opt-in run log archive only — writing, reading,
+  the run history summary, the viewer, delete, and the documentation those
+  require. Project Git status is deferred out of the release and will only be
+  evaluated separately if it can be shown to provide value the editor and the Git
+  client do not already provide.
+- The SQLite schema upgrade from version 1 to version 2 was approved in principle,
+  conditionally: red tests first, covering a complete version 1 upgrade, idempotent
+  reopening, rejection of a version above 2, a failed migration leaving an openable
+  version 1 database, and no regression in the existing queries and settings
+  behavior. That condition is discharged — the tests were written and run red, then
+  the migration was implemented.
+- Red-test evidence, before the migration, `cargo test --lib` in
+  `apps/desktop/src-tauri`: `109 passed; 6 failed; 1 ignored`. The six failures are
+  `migration_is_idempotent_and_sets_version` (`left: 1, right: 2`),
+  `a_populated_version_1_database_upgrades_to_version_2` (version stays 1),
+  `reopening_an_upgraded_database_is_idempotent` and
+  `the_archive_index_rejects_impossible_rows` (`run_log_archives` does not
+  exist), `a_version_2_database_opens_and_only_a_higher_version_is_rejected`
+  (version 2 is currently rejected as too new), and
+  `a_failed_migration_leaves_the_version_1_database_intact` (opening succeeds
+  today because nothing tries to create the table). `cargo fmt --all -- --check`
+  and `cargo clippy --all-targets --all-features -- -D warnings` are clean in
+  that crate.
+- Honest limitation of that evidence: `version_1_user_data_survives_the_upgrade`
+  was green rather than red, because a version 1 database already opened and read
+  correctly on the pre-migration build; it is now the upgrade's data guarantee. And
+  "the file is still openable by the previous build" is asserted by proxy — the test
+  cannot run the v0.2.1 binary, so it checks that the version is still 1, that
+  every version 1 row still reads, that no partial object was left behind, and that
+  opening succeeds once the conflict is removed.
+- Verification-matrix correction found while running this: the desktop crate is
+  not a workspace member of the root package, so `cargo test --all-targets` at the
+  repository root never covers `storage.rs`. CI runs the desktop Rust tests with
+  `working-directory: apps/desktop/src-tauri`, and `V0.3.0_PLAN.md` now records
+  that as a separate required invocation.
+- Migration implemented the same day. Post-migration verification in
+  `apps/desktop/src-tauri`: `cargo fmt --all -- --check` clean;
+  `cargo clippy --all-targets --all-features -- -D warnings` clean with zero
+  warnings; `cargo test --all-targets` at `116 passed; 0 failed; 1 ignored` for the
+  lib target and `0 passed; 0 failed` for the `main.rs` target. The single ignored
+  test predates this work. All six red tests are green and none was weakened,
+  relaxed, or deleted to get there. The `npm` half of the matrix and
+  `cargo tauri build` were not run because no frontend file changed; the full
+  matrix is still owed before the milestone is called done.
+- Production code changed, and nothing else: `models.rs` gained
+  `RunLogArchiveSummary` and `RunSession.archive`; `storage.rs` gained
+  `SCHEMA_VERSION`, the `> SCHEMA_VERSION` guard, `upgrade_to_version_2` and its
+  call site, and the `list_sessions` `LEFT JOIN run_log_archives`. No writer, no
+  commands, no frontend, no startup sweep.
+- Defect the red tests caught, worth recording because reading the DDL did not
+  reveal it: the constraint arms were written
+  `status = 'partial' AND reason IN (...)`, which does not reject a null reason.
+  `NULL IN (...)` evaluates to NULL, `1 AND NULL` to NULL, the surrounding
+  `0 OR NULL OR 0` to NULL, and a SQLite `CHECK` passes when its expression is NULL
+  instead of failing. The constraint therefore accepted exactly what it was written
+  to forbid — a `partial` or `removed` archive with no reason, which the UI would
+  render as a badge with no explanation. `the_archive_index_rejects_impossible_rows`
+  reported it as
+  `partial must carry a reason: ('sess-exited','a.jsonl','partial',NULL,...) was
+  accepted`. Fixed with an explicit `reason IS NOT NULL` in both arms, in the
+  migration and in the test's pinned `V2_ADDITION`, and pinned by a ninth rejection
+  case for the `removed` arm.
+- Second, smaller finding: that same test had been passing vacuously. Its eight
+  rejection assertions all held while `run_log_archives` did not exist, and the run
+  only failed at its final acceptance insert. An `object_exists` guard now runs
+  before the loop, so a missing table fails at the guard rather than silently
+  validating nothing. A rejection test needs a positive control.
+- Migration direction, one sentence used unchanged in every document and release
+  note: 迁移失败时 SQLite 事务回滚并保持 v1；迁移成功后没有应用级回退或数据库降级
+  路径。In English: a failed migration rolls back the SQLite transaction and stays
+  at v1; a successful migration has no application-level fallback and no database
+  downgrade path. Concretely, a v1 database is opened unchanged by this build and by
+  v0.2.1 with user data untouched, while a v2 database is refused by v0.2.1 because
+  that build rejects any `user_version` above 1, and no code returns a version 2
+  database to version 1. The two halves are not a pair and neither is a rollback of
+  the other; do not call a successful upgrade revertible. A fresh install runs
+  0 → 1 → 2 as two separate atomic transactions, each resumable on the next launch,
+  while the version 1 to version 2 upgrade itself is a single transaction with
+  `PRAGMA user_version=2` as its last statement.
+- The startup sweep was deliberately kept out of this step even though the plan's
+  execution order had bundled it with the migration. It re-measures archive files,
+  repairs `writing` rows, marks `file-missing`, deletes orphan files, and
+  initializes the quota counter — all of which require an archive directory that
+  does not exist until the writer exists. It moves to the writer step and owes red
+  tests together with the writer, the queue, the quota, and the lifecycle.
+- Working-tree scope is now seven paths: modified `AGENTS.md`, `HANDOFF.md`, this
+  file, `apps/desktop/src-tauri/src/models.rs`, and
+  `apps/desktop/src-tauri/src/storage.rs`, plus untracked `CLAUDE.md` and
+  `V0.3.0_PLAN.md`. No database file, CI/release file, tag, or remote state was
+  changed, nothing was committed or pushed, and no software-copyright application
+  material was produced.
+
+## 2026-08-14 External Handoff And Registration Direction
+
+- The user is temporarily handing RunCove to Claude for possible product
+  expansion and may later return the resulting changes to Codex for review.
+  `CLAUDE.md` now provides a concise cross-agent entry point while `AGENTS.md`,
+  `HANDOFF.md`, and this file remain the authoritative project record.
+- The intended use in a software copyright registration application is a future
+  direction only. No jurisdiction-specific checklist, legal conclusion,
+  submission package, feature scope, or version number has been approved.
+  Current authoritative requirements must be checked when the user starts that
+  work; the project should not be padded with meaningless code or features.
+- The verified baseline remains published `v0.2.1`: local `main` and
+  `origin/main` were synchronized at
+  `97943d7fabbbd400481171568bf970b38a2c9afa`, and the release tag targets
+  `5e3e0d4d63ae04fe8e27c37c4500d3bd9ef75f13`.
+- The project entered a waiting state on 2026-08-14. This handoff changes only
+  project documentation. It does not authorize code, database, CI/release,
+  tag, published-asset, runtime-process, or remote changes.
+- The handoff documentation is intentionally uncommitted and unpushed. Its
+  expected working-tree scope is five paths: modified `AGENTS.md`, `HANDOFF.md`,
+  and this file, plus untracked `CLAUDE.md` and `V0.3.0_PLAN.md`. Superseded on
+  2026-08-15: six paths after the red tests, seven after the migration. See the
+  section above.
+- `V0.3.0_PLAN.md` is a reviewed proposal for an opt-in on-disk run log archive.
+  Its second draft answers an external review, drops project Git status to a
+  deferred proposal, and gates implementation on three explicit approvals: the
+  SQLite schema version 1 to version 2 migration, archive-only v0.3.0 scope, and
+  whether project Git status is worth building at all. None has been granted, so
+  no implementation is authorized. Superseded on 2026-08-15: scope approved, Git
+  status deferred, the migration approved conditionally and then implemented after
+  its red tests ran red.
+
 ## v0.2.1 Local Completion (2026-08-13)
 
 - Implemented the approved `V0.2.1_PLAN.md` from `main` commit `bf3d532`

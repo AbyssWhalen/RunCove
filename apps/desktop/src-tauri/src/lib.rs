@@ -1,3 +1,5 @@
+pub mod archive;
+mod archive_service;
 mod commands;
 mod discovery;
 mod error;
@@ -10,13 +12,14 @@ mod single_instance;
 mod state;
 mod storage;
 
+use crate::archive_service::ArchiveService;
 use crate::commands::{
-    clear_logs, confirm_port_association, delete_project, discover_project, get_app_settings,
-    get_dashboard_snapshot, get_logs, get_run_history, hide_to_tray, open_port,
-    open_project_directory, request_elevated_monitoring, restart_profile, restore_last_run_set,
-    save_project, scan_development_root, scan_saved_development_root, set_close_behavior,
-    set_language_preference, shutdown, shutdown_app, start_profile, stop_profile,
-    terminate_external_process,
+    clear_logs, confirm_port_association, delete_project, delete_run_log_archive, discover_project,
+    get_app_settings, get_dashboard_snapshot, get_logs, get_run_history, hide_to_tray, open_port,
+    open_project_directory, read_run_log_archive, request_elevated_monitoring, restart_profile,
+    restore_last_run_set, save_project, scan_development_root, scan_saved_development_root,
+    set_close_behavior, set_language_preference, set_run_log_archiving, shutdown, shutdown_app,
+    start_profile, stop_profile, terminate_external_process,
 };
 use crate::language::{tray_labels, tray_status_text, DisplayLanguage};
 use crate::models::{CloseBehavior, LanguagePreference};
@@ -235,7 +238,21 @@ pub fn run() {
             std::fs::create_dir_all(&data_dir)?;
             let storage = Arc::new(Storage::open(&data_dir.join("runcove.sqlite3"))?);
             let settings = storage.settings()?;
-            let processes = Arc::new(ProcessManager::new(settings.log_capacity));
+            let archive_handle = app.handle().clone();
+            let archive = Arc::new(ArchiveService::new(
+                &data_dir,
+                storage.clone(),
+                settings.archive_run_logs,
+                Arc::new(move |message| {
+                    emit_lifecycle_error(&archive_handle, "runLogArchive", message);
+                }),
+            ));
+            // Reconcile before any project can start: this repairs rows a crash left
+            // `writing` and measures the directory the quota is charged against. It is a
+            // no-op when archiving is off and no archive directory exists, so the default
+            // still creates nothing.
+            archive.start();
+            let processes = Arc::new(ProcessManager::with_archive(settings.log_capacity, archive));
             app.manage(AppState { storage, processes });
             let tray = build_tray(app, language::resolve(settings.language_preference))?;
             app.manage(tray);
@@ -265,6 +282,9 @@ pub fn run() {
             hide_to_tray,
             set_close_behavior,
             set_language_preference,
+            set_run_log_archiving,
+            read_run_log_archive,
+            delete_run_log_archive,
             shutdown_app,
         ])
         .build(tauri::generate_context!())

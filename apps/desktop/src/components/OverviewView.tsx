@@ -35,6 +35,8 @@ interface OverviewViewProps {
   onRetryRunHistory?: () => void;
   onOpenRunHistory?: () => void;
   onLocateRunHistory?: (projectId: string, profileId: string) => void;
+  onViewArchive?: (session: RunSession) => void;
+  onDeleteArchive?: (session: RunSession) => void;
 }
 
 export function OverviewView({
@@ -55,6 +57,8 @@ export function OverviewView({
   onRetryRunHistory = () => undefined,
   onOpenRunHistory = () => undefined,
   onLocateRunHistory = () => undefined,
+  onViewArchive = () => undefined,
+  onDeleteArchive = () => undefined,
 }: OverviewViewProps) {
   const { t, formatDateTime, formatTime } = useI18n();
   const profiles = snapshot.projects.flatMap((project) =>
@@ -200,6 +204,8 @@ export function OverviewView({
         labels={runHistoryLabels}
         onRetry={onRetryRunHistory}
         onLocate={onLocateRunHistory}
+        onViewArchive={onViewArchive}
+        onDeleteArchive={onDeleteArchive}
         onOpenAll={onOpenRunHistory}
       />}
     </div>

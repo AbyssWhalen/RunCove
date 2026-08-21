@@ -124,7 +124,7 @@ pub struct RunStatusEvent {
     pub timestamp: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunLogEvent {
     pub profile_id: String,
@@ -133,7 +133,19 @@ pub struct RunLogEvent {
     pub timestamp: i64,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+/// One run's archive reached its final row.
+///
+/// A close writes the session's remaining records and syncs the file, so it cannot
+/// run inside the managed map's lock and necessarily lands after the exit event the
+/// frontend reloads history on. Without this event that reload is the last one, and a
+/// finished archive stays on screen as `finalizing` until something else refetches.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchiveClosedEvent {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LogStream {
     Stdout,
@@ -182,6 +194,26 @@ pub struct PortAssociation {
     pub last_seen_at: i64,
 }
 
+/// One run log archive as the user interface sees it.
+///
+/// `status` and `reason` are strings, not enums, for the same reason
+/// `RunSession::status` is: a database written by a newer build may carry values
+/// this build does not know, and passing them through unchanged is better than
+/// failing to deserialize the whole history. The database `CHECK` constraints,
+/// not this type, are what keep impossible combinations out.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunLogArchiveSummary {
+    pub status: String,
+    pub reason: Option<String>,
+    pub line_count: i64,
+    pub byte_size: i64,
+    pub dropped_lines: i64,
+    pub dropped_bytes: i64,
+    pub started_at: i64,
+    pub ended_at: Option<i64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunSession {
@@ -193,6 +225,10 @@ pub struct RunSession {
     pub ended_at: Option<i64>,
     pub exit_code: Option<i32>,
     pub status: String,
+    /// `None` when this session has no archive row: archiving was off, or the
+    /// session predates the version 2 schema.
+    #[serde(default)]
+    pub archive: Option<RunLogArchiveSummary>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -213,6 +249,16 @@ pub struct AppSettings {
     pub recent_development_root: Option<String>,
     #[serde(default)]
     pub close_behavior: CloseBehavior,
+    /// Whether new runs write their output to a plain-text file on disk.
+    ///
+    /// `#[serde(default)]` over a `bool` means off, and off is the only safe
+    /// default: an archive holds whatever the child printed, secrets included, so
+    /// nothing is written to disk until the user asks for it. A settings row saved
+    /// by v0.2.1 has no such key and therefore reads back as off, which is the same
+    /// treatment `close_behavior` and `recent_development_root` got — no migration,
+    /// no new column.
+    #[serde(default)]
+    pub archive_run_logs: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -267,8 +313,71 @@ impl Default for AppSettings {
             language_preference: LanguagePreference::System,
             recent_development_root: None,
             close_behavior: CloseBehavior::Ask,
+            archive_run_logs: false,
         }
     }
+}
+
+/// What the run log archive can do right now, as the toggle and the viewer see
+/// it.
+///
+/// `enabled` is what the user asked for and `available` is what this run can
+/// actually do, and they are reported separately on purpose: an initialization
+/// that failed must not render as "on", because that would imply output is being
+/// captured when none is. A disabled feature is available and off; a broken one is
+/// unavailable and says why.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunLogArchiveState {
+    pub enabled: bool,
+    pub available: bool,
+    /// Why the archive cannot run, in the user's words, or `None` when it can.
+    pub unavailable_reason: Option<String>,
+}
+
+/// One archived record as the viewer receives it.
+///
+/// The archive stores the decoded text of a `RunLogEvent`, so this is the same
+/// three fields the live drawer shows, without the profile id the file's name
+/// already implies.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunLogArchiveRecord {
+    pub stream: LogStream,
+    pub line: String,
+    pub timestamp: i64,
+}
+
+/// One page of an archive, oldest record first, plus everything the viewer needs
+/// to ask for the page before it.
+///
+/// `file_length` is measured at read time and is exact, while the row counters are
+/// as fresh as the writer's last refresh: a page of a session still being written
+/// can legitimately hold more lines than `line_count` claims.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunLogArchivePage {
+    pub session_id: String,
+    pub status: String,
+    pub reason: Option<String>,
+    pub line_count: i64,
+    pub byte_size: i64,
+    pub dropped_lines: i64,
+    pub dropped_bytes: i64,
+    pub started_at: i64,
+    pub ended_at: Option<i64>,
+    pub records: Vec<RunLogArchiveRecord>,
+    /// The measured length of the file this page was read from.
+    pub file_length: u64,
+    /// Feed this back as `before_offset` to page towards the start.
+    pub page_start_offset: u64,
+    pub has_more_before: bool,
+    /// Which bound ended the page: `lines`, `bytes`, or `start`.
+    pub stopped_by: String,
+    /// Bytes after the last newline were not a whole record and were skipped.
+    pub incomplete_tail_skipped: bool,
+    /// Records inside the page that were not readable JSON and were skipped.
+    pub malformed_lines: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -281,6 +390,9 @@ pub struct DashboardSnapshot {
     pub privilege: crate::privileges::PrivilegeStatus,
     pub generated_at: i64,
     pub scan_error: Option<String>,
+    /// What the archive can do right now, which `settings.archive_run_logs` alone
+    /// cannot say: the stored setting can be on while this run's archive is broken.
+    pub run_log_archive: RunLogArchiveState,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -370,6 +482,21 @@ mod tests {
         })
         .unwrap();
         assert!(without_context.get("relatedPort").is_none());
+    }
+
+    /// The frontend listens for `run-archive-closed` and reads `sessionId` off the
+    /// payload to reload history. A rename on this side would leave that listener
+    /// reading `undefined`, and a finished archive would keep rendering as
+    /// "finalizing" — a silent failure, so the wire name is pinned here.
+    #[test]
+    fn the_archive_closed_event_names_its_session_in_camel_case() {
+        let event = serde_json::to_value(ArchiveClosedEvent {
+            session_id: "session".into(),
+        })
+        .unwrap();
+
+        assert_eq!(event["sessionId"], "session");
+        assert!(event.get("session_id").is_none());
     }
 
     #[test]

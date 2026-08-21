@@ -65,6 +65,8 @@ export interface AppSettings {
   languagePreference: "system" | "en" | "zh-CN";
   recentDevelopmentRoot?: string | null;
   closeBehavior: CloseBehavior;
+  /** Whether runs started from now on also write their output to a file on disk. */
+  archiveRunLogs: boolean;
 }
 
 export type CloseBehavior = "ask" | "hideToTray" | "quit";
@@ -77,6 +79,7 @@ export interface DashboardSnapshot {
   privilege: PrivilegeStatus;
   generatedAt: number;
   scanError?: string | null;
+  runLogArchive: RunLogArchiveState;
 }
 
 export interface PrivilegeStatus {
@@ -147,6 +150,100 @@ export interface RunLogEvent {
   timestamp: number;
 }
 
+/**
+ * One run's archive reached its final row.
+ *
+ * The exit event's own history reload runs while the row is still `writing`, because
+ * the writer closes the file outside the lock that event is emitted under. This is
+ * what turns a `finalizing` badge into the row it settled on.
+ */
+export interface ArchiveClosedEvent {
+  sessionId: string;
+}
+
+/**
+ * What the run log archive can do right now.
+ *
+ * `enabled` is what the user asked for and `available` is what this run can
+ * actually do. They are separate because an archive that failed to initialize must
+ * not render as on: that would promise output is being captured when none is.
+ */
+export interface RunLogArchiveState {
+  enabled: boolean;
+  available: boolean;
+  unavailableReason?: string | null;
+}
+
+/** The statuses this build knows how to describe. */
+export type RunLogArchiveStatus = "writing" | "complete" | "partial" | "removed";
+
+/** The reasons this build knows how to describe. */
+export type RunLogArchiveReason =
+  | "write-error"
+  | "quota-exceeded"
+  | "queue-overflow"
+  | "interrupted"
+  | "user-disabled"
+  | "quota-evicted"
+  | "user-deleted"
+  | "file-missing";
+
+/**
+ * One run log archive as the history surfaces see it.
+ *
+ * `status` and `reason` are plain strings rather than the unions above for the
+ * same reason the Rust type keeps them as strings: a database written by a newer
+ * build may carry a value this one does not know, and passing it through is better
+ * than failing to read the whole history. Anything rendering them must have a
+ * fallback for a value it does not recognise.
+ */
+export interface RunLogArchiveSummary {
+  status: string;
+  reason?: string | null;
+  lineCount: number;
+  byteSize: number;
+  droppedLines: number;
+  droppedBytes: number;
+  startedAt: number;
+  endedAt?: number | null;
+}
+
+/** One archived record: the same three fields the live drawer shows. */
+export interface RunLogArchiveRecord {
+  stream: RunLogEvent["stream"];
+  line: string;
+  timestamp: number;
+}
+
+/**
+ * One page of an archive, oldest record first, plus what the viewer needs to ask
+ * for the page before it.
+ *
+ * `fileLength` is measured at read time and is exact; the row counters are as
+ * fresh as the writer's last refresh, so a page of a session still being written
+ * can hold more lines than `lineCount` claims.
+ */
+export interface RunLogArchivePage {
+  sessionId: string;
+  status: string;
+  reason?: string | null;
+  lineCount: number;
+  byteSize: number;
+  droppedLines: number;
+  droppedBytes: number;
+  startedAt: number;
+  endedAt?: number | null;
+  records: RunLogArchiveRecord[];
+  fileLength: number;
+  /** Feed this back as `beforeOffset` to page towards the start. */
+  pageStartOffset: number;
+  hasMoreBefore: boolean;
+  /** Which bound ended the page: `lines`, `bytes`, or `start`. */
+  stoppedBy: string;
+  incompleteTailSkipped: boolean;
+  malformedLines: number;
+}
+
 export type RunSessionStatus =
   | "starting"
   | "running"
@@ -163,6 +260,8 @@ export interface RunSession {
   endedAt?: number | null;
   exitCode?: number | null;
   status: RunSessionStatus;
+  /** Absent when the session has no archive: archiving was off, or it predates the feature. */
+  archive?: RunLogArchiveSummary | null;
 }
 
 export interface RestoreResult {
@@ -208,6 +307,13 @@ export interface RunCoveApi {
   clearLogs(profileId: string): Promise<void>;
   getLogs(profileId: string): Promise<RunLogEvent[]>;
   getRunHistory(): Promise<RunSession[]>;
+  setRunLogArchiving(enabled: boolean): Promise<RunLogArchiveState>;
+  readRunLogArchive(
+    sessionId: string,
+    beforeOffset?: number | null,
+    maxLines?: number | null,
+  ): Promise<RunLogArchivePage>;
+  deleteRunLogArchive(sessionId: string): Promise<void>;
   openPort(port: number, protocol: Protocol): Promise<void>;
   openProjectDirectory(projectId: string): Promise<void>;
   shutdownApp(): Promise<void>;
@@ -218,6 +324,7 @@ export interface RunCoveApi {
   pickProjectDirectory(): Promise<string | null>;
   onRunStatus(handler: (event: RunStatusEvent) => void): Promise<Unlisten>;
   onRunLog(handler: (event: RunLogEvent) => void): Promise<Unlisten>;
+  onArchiveClosed(handler: (event: ArchiveClosedEvent) => void): Promise<Unlisten>;
   onPortSnapshot(handler: (snapshot: DashboardSnapshot) => void): Promise<Unlisten>;
   onLifecycleError(handler: (message: string) => void): Promise<Unlisten>;
   onTrayRestoreRequested(handler: () => void): Promise<Unlisten>;

@@ -637,7 +637,9 @@ p {
 }
 
 .run-history-table {
-  min-width: 900px;
+  /* Ten columns: the archive badge is the widest of the added ones, and the shell
+     scrolls horizontally rather than letting the timestamps wrap. */
+  min-width: 1040px;
 }
 
 .run-history-table th,
@@ -959,6 +961,45 @@ td .row-actions {
   border-color: #c9d7e7;
   color: #2a5f91;
   background: var(--info-soft);
+}
+
+/* Archive badges appear on a light table row and on the viewer's dark header, so
+   they keep one light chip palette in both places instead of inheriting a surface. */
+.archive-badge--writing {
+  border-color: #c9d7e7;
+  color: #2a5f91;
+  background: var(--info-soft);
+}
+
+.archive-badge--finalizing {
+  border-color: #ead39f;
+  color: #815618;
+  background: var(--warning-soft);
+}
+
+.archive-badge--complete {
+  border-color: #b8ded5;
+  color: #0d6657;
+  background: var(--accent-soft);
+}
+
+.archive-badge--partial {
+  border-color: #ecc2bd;
+  color: #983333;
+  background: var(--danger-soft);
+}
+
+.archive-badge--removed,
+.archive-badge--unknown {
+  border-color: #d4d8d3;
+  color: #656c66;
+  background: #f0f2ef;
+}
+
+/* A status this build has never heard of: the dashed edge says the value was passed
+   through rather than understood. */
+.archive-badge--unknown {
+  border-style: dashed;
 }
 
 .public-flag {
@@ -1811,6 +1852,9 @@ td .row-actions {
 .drawer-backdrop {
   place-items: stretch;
   justify-content: end;
+  /* A definite row, so a drawer's `height: 100%` is the viewport rather than its own
+     content: an auto row grows to the longest log and pushes the panel off-screen. */
+  grid-template-rows: 100%;
   padding: 0;
 }
 
@@ -1908,6 +1952,81 @@ td .row-actions {
 .segmented-control--dark button.is-selected {
   color: #ffffff;
   background: #3a413c;
+}
+
+.archive-toggle {
+  padding: 9px 11px;
+  border-bottom: 1px solid #303531;
+  background: #1d211e;
+}
+
+.archive-toggle-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #dfe3df;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.archive-toggle-control input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.archive-toggle-hint {
+  margin: 5px 0 0;
+  color: #9aa29b;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.archive-toggle-status {
+  margin: 6px 0 0;
+  color: #9ed3c3;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.archive-toggle-status--warning {
+  color: #f0c396;
+}
+
+/* Wider than the live drawer: an archived line is read rather than watched, and the
+   header carries a badge next to the profile name. Declared after `.log-drawer` so
+   this width wins at equal specificity. */
+.archive-drawer {
+  width: min(840px, calc(100vw - 196px));
+}
+
+.archive-notes {
+  display: grid;
+  gap: 3px;
+  padding: 8px 11px;
+  border-bottom: 1px solid #4c4530;
+  color: #e6cfa4;
+  background: #2b271b;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.archive-notes p {
+  margin: 0;
+}
+
+.archive-page-control {
+  display: flex;
+  justify-content: center;
+  padding: 4px 14px 10px;
+}
+
+.archive-page-control.muted {
+  color: #78807a;
+  font-size: 10px;
 }
 
 .log-output {

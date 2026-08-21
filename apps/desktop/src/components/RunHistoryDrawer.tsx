@@ -15,6 +15,8 @@ interface RunHistoryDrawerProps {
   labels: RunHistoryLabels;
   onRetry: () => void;
   onLocate: (projectId: string, profileId: string) => void;
+  onViewArchive: (session: RunSession) => void;
+  onDeleteArchive: (session: RunSession) => void;
   onClose: () => void;
 }
 
@@ -26,6 +28,8 @@ export function RunHistoryDrawer({
   labels,
   onRetry,
   onLocate,
+  onViewArchive,
+  onDeleteArchive,
   onClose,
 }: RunHistoryDrawerProps) {
   const [query, setQuery] = useState("");
@@ -103,7 +107,13 @@ export function RunHistoryDrawer({
           {!error && !loading && availableSessions.length === 0 && <div className="empty-state">{labels.empty}</div>}
           {!error && !loading && availableSessions.length > 0 && entries.length === 0 && <div className="empty-state">{labels.noMatches}</div>}
           {!error && !loading && entries.length > 0 && (
-            <RunHistoryTable entries={entries} labels={labels} onLocate={onLocate} />
+            <RunHistoryTable
+              entries={entries}
+              labels={labels}
+              onLocate={onLocate}
+              onViewArchive={onViewArchive}
+              onDeleteArchive={onDeleteArchive}
+            />
           )}
         </div>
       </aside>
