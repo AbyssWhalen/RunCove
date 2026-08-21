@@ -42,6 +42,12 @@
   production build on 2026-08-20. These two environment-limited checks and the process
   test are therefore delegated to the unchanged GitHub PR CI on a clean Windows runner;
   the PR must be fully green before merge or tag.
+- PR #3's first CI run passed all four CLI/lint jobs and every frontend step, including
+  the official npm audit, production frontend build, and six Playwright workflows. The
+  Windows desktop job then found one Rust 1.98-only Clippy error in test data:
+  `format!("{uuid}")` triggered `clippy::useless_format`. It is corrected to
+  `uuid.to_string()` with no production-code or assertion change; the follow-up CI run
+  remains the merge gate.
 
 ## 2026-08-20 v0.3.0 Local Demo Candidate: Frozen After The Pre-Release Wrap-Up
 

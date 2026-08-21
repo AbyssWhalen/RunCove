@@ -3477,7 +3477,7 @@ mod tests {
             format!("{uuid}.jsonl:stream"),
             format!("{uuid}.jsonl.txt"),
             format!("{uuid}.JSONL"),
-            format!("{uuid}"),
+            uuid.to_string(),
             SESSION_A.to_uppercase(),
             format!("{}.jsonl", SESSION_A.to_uppercase()),
             format!("{}.jsonl", &uuid[..uuid.len() - 1]),

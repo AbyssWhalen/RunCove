@@ -29,6 +29,11 @@
   a fresh Playwright and Vite/Tauri rerun even though both passed on the frozen tree the
   previous day. Decision: do not change product code or tests for environment behavior;
   require every unchanged GitHub PR check to pass before merge and tag.
+- PR #3 exposed a toolchain-drift lint, not a behavior failure: Rust 1.98 rejects the
+  test-only expression `format!("{uuid}")` as `clippy::useless_format`, while the local
+  stable toolchain accepted it. Replace it with `uuid.to_string()`; test inputs and
+  assertions are unchanged. The same CI run already proved npm audit, frontend build,
+  and all six Playwright workflows on the clean Windows runner.
 
 ## 2026-08-20 v0.3.0 Freeze: The Wrap-Up Decisions
 
