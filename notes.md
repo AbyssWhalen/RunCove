@@ -1,5 +1,24 @@
 # RunCove Implementation Notes
 
+## 2026-08-22 v0.3.0 Publication Checkpoint
+
+- PR #3 was merged and the public `v0.3.0` release was published successfully.
+  `main`, `origin/main`, and the annotated tag resolve to
+  `bd2b7776d56ddf750ffe97a3d8219168fbb04069`.
+- Release workflow `32500425361` passed all validation, cross-platform CLI,
+  Windows desktop, packaging, checksum, and publish jobs. The five downloaded
+  binary archives matched the published `SHA256SUMS.txt` entries by SHA-256.
+  No workflow file was changed.
+- The post-restart repository check is clean. Local scratch verification lives
+  outside the repository in `D:\tmp`; no build output or real application
+  database was introduced into the tree.
+- Local verification caveats remain recorded rather than hidden: the managed
+  session saw Windows `Access denied` in the real-process termination test and
+  `spawn EPERM` when trying to start Node children. GitHub's clean Windows job
+  passed the complete release matrix, including six E2E flows and `tauri build`.
+- Decision: freeze v0.3.0 for exploratory use. The next change should be a new
+  user-approved product scope, not a cleanup refactor or soft-copyright padding.
+
 ## 2026-08-21 v0.3.0 Release Decision
 
 - The user explicitly authorized commit, push, tag, and public release after the

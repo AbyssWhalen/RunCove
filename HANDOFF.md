@@ -1,5 +1,30 @@
 # RunCove Handoff
 
+## 2026-08-22 v0.3.0 Published And Verified
+
+- The v0.3.0 release is public at
+  https://github.com/AbyssWhalen/RunCove/releases/tag/v0.3.0. It is a non-draft,
+  non-prerelease release with the Windows portable desktop archive, the CLI
+  archives, and `SHA256SUMS.txt`.
+- PR #3 is merged. `main`, `origin/main`, and the annotated `v0.3.0` tag all
+  resolve to merge commit `bd2b7776d56ddf750ffe97a3d8219168fbb04069`.
+- Release workflow `32500425361` completed successfully. Its Windows desktop
+  job ran the frontend lint, typecheck, Vitest, build, six E2E flows, Rust
+  checks, and Tauri build on a clean runner. The downloaded five binary
+  archives matched the published SHA-256 manifest. An initial local parser
+  check used the wrong spacing assumption; the final evidence is the direct
+  hash comparison, not that parser result.
+- The local worktree is clean after the restart. Release verification scratch
+  data is outside the repository under `D:\tmp`; no generated output or user
+  database was added to the project. `CLAUDE.md` remains local and ignored.
+- Local Codex verification remains partially environment-limited: one real
+  process-termination test returned Windows `Access denied`, and fresh Node
+  child-process creation returned `spawn EPERM`. The unchanged GitHub CI run
+  passed the corresponding Windows checks. The release workflow emitted only
+  existing Node 20 deprecation annotations.
+- v0.3.0 is frozen for user exploration. Do not start another feature or
+  soft-copyright workstream from this checkpoint without a new scoped plan.
+
 ## 2026-08-21 v0.3.0 Release Preparation Authorized
 
 - The user accepted the local-demo level of stability and explicitly authorized
