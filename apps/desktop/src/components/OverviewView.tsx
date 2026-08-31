@@ -130,7 +130,9 @@ export function OverviewView({
         <button
           className="button button--primary"
           onClick={onRestore}
-          disabled={monitorOnly || restoreBusy || snapshot.restoreSet.profileIds.length === 0}
+          // Also disabled while a group action runs: both walk profiles and start them
+          // through the same reservation, so overlapping the two only produces a refusal.
+          disabled={monitorOnly || restoreBusy || busyGroups.size > 0 || snapshot.restoreSet.profileIds.length === 0}
           title={monitorOnly ? t("privilege.monitorOnlyAction") : undefined}
         >
           <Play size={15} fill="currentColor" />
@@ -143,6 +145,7 @@ export function OverviewView({
         projects={snapshot.projects}
         monitorOnly={monitorOnly}
         busyGroups={busyGroups}
+        restoreBusy={restoreBusy}
         onNew={onNewGroup}
         onEdit={onEditGroup}
         onDelete={onDeleteGroup}

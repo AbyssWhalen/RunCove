@@ -156,6 +156,20 @@ function AppShell() {
   const restoreInFlight = useRef(false);
   const projectDeleteInFlight = useRef(false);
   const groupActionsInFlight = useRef(new Set<string>());
+  /**
+   * The members each in-flight group action is walking, keyed by group id.
+   *
+   * Keyed rather than flattened into one set because two groups may share a member:
+   * removing by group id cannot clear a profile the other group still holds.
+   */
+  const groupMembersInFlight = useRef(new Map<string, readonly string[]>());
+  /**
+   * The most recent snapshot, for callbacks that must not change identity when it does.
+   *
+   * Anything rendered reads the `snapshot` state; this exists only so a stable callback
+   * can look something up in the current one.
+   */
+  const latestSnapshot = useRef<DashboardSnapshot | null>(null);
   const groupSaveInFlight = useRef(false);
   const groupDeleteInFlight = useRef(false);
   const archiveDeleteInFlight = useRef(false);
@@ -220,6 +234,10 @@ function AppShell() {
   useEffect(() => {
     void loadSnapshot();
   }, [loadSnapshot]);
+
+  useEffect(() => {
+    latestSnapshot.current = snapshot;
+  }, [snapshot]);
 
   useEffect(() => {
     if (activeView === "overview" && !runHistoryLoaded.current) void loadRunHistory();
@@ -399,12 +417,28 @@ function AppShell() {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
+  /** Whether some group action currently in flight is walking this profile. */
+  const groupActionHoldsProfile = (profileId: string) => {
+    for (const members of groupMembersInFlight.current.values()) {
+      if (members.includes(profileId)) return true;
+    }
+    return false;
+  };
+
   const runProfileAction = async (
     profileId: string,
     action: (profileId: string) => Promise<RunStatusEvent>,
     completedMessage: MessageKey,
   ) => {
-    if (restoreInFlight.current || profileActionsInFlight.current.has(profileId)) return;
+    // Also refused while a group action holds this profile: `effectiveBusyProfileIds`
+    // disables the button, and this latch covers a click that beat the state update.
+    if (
+      restoreInFlight.current ||
+      profileActionsInFlight.current.has(profileId) ||
+      groupActionHoldsProfile(profileId)
+    ) {
+      return;
+    }
     profileActionsInFlight.current.add(profileId);
     setBusyProfileIds((current) => new Set(current).add(profileId));
     const previousStatusEvent = profileStatusEvents.current.get(profileId);
@@ -435,8 +469,31 @@ function AppShell() {
     }
   };
 
+  /**
+   * `Project / Profile` for a profile id, or the raw id when no project claims it.
+   *
+   * A restore or group failure has to name the profile it stopped at — an id alone does
+   * not tell the user which window to look at — and the profile may live in any project.
+   *
+   * Reads the snapshot through a ref so this stays referentially stable. Closing over
+   * `snapshot` instead would change its identity on every poll, and through it every
+   * callback that names a profile — including `restoreLastRunSet`, whose identity the
+   * tray subscription effect depends on. That effect would then tear down and
+   * re-subscribe once a second.
+   */
+  const profileLabel = useCallback((profileId: string) => {
+    const entry = latestSnapshot.current?.projects
+      .flatMap((project) => project.profiles.map((profile) => ({ project, profile })))
+      .find(({ profile }) => profile.id === profileId);
+    return entry ? `${entry.project.name} / ${entry.profile.name}` : profileId;
+  }, []);
+
   const restoreLastRunSet = useCallback(async () => {
-    if (restoreInFlight.current) return;
+    // A group action walks the same profiles this does, so letting both run would have
+    // them race for the backend's per-profile reservation and surface as an unexplained
+    // "already starting" failure. The buttons are disabled for this too; the latch is
+    // what holds when a click lands in the gap before the state updates.
+    if (restoreInFlight.current || groupActionsInFlight.current.size > 0) return;
     restoreInFlight.current = true;
     setRestoreBusy(true);
     try {
@@ -446,7 +503,7 @@ function AppShell() {
       if (result.error) {
         showError(t("error.restorePartial", {
           count: result.startedProfileIds.length,
-          profile: result.failedProfileId ?? "-",
+          profile: result.failedProfileId ? profileLabel(result.failedProfileId) : "-",
           detail: result.error,
         }), result.relatedPort);
       } else {
@@ -458,20 +515,7 @@ function AppShell() {
       restoreInFlight.current = false;
       setRestoreBusy(false);
     }
-  }, [loadRunHistory, loadSnapshot, showError, t]);
-
-  /**
-   * `Project / Profile` for a profile id, or the raw id when no project claims it.
-   *
-   * A group failure has to name the member it stopped at — an id alone does not tell
-   * the user which window to look at — and the member may live in any project.
-   */
-  const profileLabel = (profileId: string) => {
-    const entry = snapshot?.projects
-      .flatMap((project) => project.profiles.map((profile) => ({ project, profile })))
-      .find(({ profile }) => profile.id === profileId);
-    return entry ? `${entry.project.name} / ${entry.profile.name}` : profileId;
-  };
+  }, [loadRunHistory, loadSnapshot, profileLabel, showError, t]);
 
   /**
    * Run one whole-group action and report what it actually did.
@@ -484,6 +528,7 @@ function AppShell() {
   const runGroupAction = async (group: LaunchGroup, action: GroupAction) => {
     if (restoreInFlight.current || groupActionsInFlight.current.has(group.id)) return;
     groupActionsInFlight.current.add(group.id);
+    groupMembersInFlight.current.set(group.id, group.profileIds);
     setBusyGroups((current) => new Map(current).set(group.id, action));
     try {
       if (action === "start") {
@@ -526,6 +571,7 @@ function AppShell() {
       showError(errorMessage(reason));
     } finally {
       groupActionsInFlight.current.delete(group.id);
+      groupMembersInFlight.current.delete(group.id);
       setBusyGroups((current) => {
         const next = new Map(current);
         next.delete(group.id);

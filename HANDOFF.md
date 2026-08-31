@@ -1,5 +1,36 @@
 # RunCove Handoff
 
+## 2026-08-31 Post-Release Review Fixes
+
+**`main` carries unreleased fixes on top of the `v0.4.0` tag.** The release itself is
+unchanged — the section below still describes it — but a review pass after publication
+found and fixed a concurrency defect, so the tag and `main` no longer have identical
+behavior. `CHANGELOG.md` has an `[Unreleased]` section; `notes.md` has the reasoning.
+
+What changed, all frontend:
+
+- A restore and a whole-group action can no longer overlap, in either direction. Fixed at
+  both the latch (`App.tsx`, `restoreLastRunSet` now also refuses while
+  `groupActionsInFlight` is non-empty; `runProfileAction` refuses a profile a group holds)
+  and the button (`OverviewView.tsx` restore button takes `busyGroups.size`;
+  `LaunchGroupSection.tsx` takes a `restoreBusy` prop). Either layer alone leaves a door
+  open: the latch without the button gives a live control that does nothing, the button
+  without the latch loses a click that lands before the state updates.
+- `profileLabel` moved above `restoreLastRunSet`, became a `useCallback` reading a new
+  `latestSnapshot` ref, and now names the profile in a failed restore instead of printing
+  its raw id. **The ref is load-bearing, not tidiness:** closing over `snapshot` makes the
+  callback change identity every poll, which re-subscribes the tray effect once a second and
+  fails two existing tests. Do not "simplify" it back.
+- Two tests added to `App.groups.test.tsx`, both verified to fail without the fix.
+
+**One fix was written and withdrawn on purpose.** Two groups sharing a member still collide
+when started together; a guard that made the second wait conflicted with a deliberate
+assertion in `LaunchGroupSection.test.tsx` (its fixture's `Morning stack` and
+`Everything down` share `web`, and the test asserts the other group stays enabled). That is
+a design trade rather than a plain defect, so it is a known limitation in `CHANGELOG.md`
+and a decision for the user, not something to re-fix without asking. No existing assertion
+was changed.
+
 ## 2026-08-31 v0.4.0 Published
 
 **RunCove v0.4.0 is released.** PR #4 is merged, `main` and `origin/main` are at the merge

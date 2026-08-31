@@ -87,6 +87,67 @@ describe("RunCove launch groups", () => {
     );
   });
 
+  it("refuses a restore while a group start is walking the same profiles", async () => {
+    // A restore and a group start both walk profiles through the backend's per-profile
+    // reservation, so overlapping them makes whichever arrives second fail with an
+    // "already starting" the user did nothing to deserve. Both doors are checked: the
+    // button, and the tray handler that does not go through it.
+    let settle: ((result: LaunchGroupStartResult) => void) | undefined;
+    vi.spyOn(api, "startLaunchGroup").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          settle = resolve;
+        }),
+    );
+    const restore = vi.spyOn(api, "restoreLastRunSet");
+    let requestRestore: (() => void) | undefined;
+    vi.spyOn(api, "onTrayRestoreRequested").mockImplementation(async (handler) => {
+      requestRestore = handler;
+      return () => {};
+    });
+    const user = await openOverview();
+
+    await user.click(screen.getByRole("button", { name: "Start Abyss Studio stack" }));
+    expect(await screen.findByText("Starting...")).toBeVisible();
+
+    expect(screen.getByRole("button", { name: "Restore previous run" })).toBeDisabled();
+    act(() => requestRestore?.());
+    expect(restore).not.toHaveBeenCalled();
+
+    await act(async () => {
+      settle?.({ groupId: "group-studio", startedProfileIds: ["profile-studio-api"] });
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Restore previous run" })).toBeEnabled(),
+    );
+  });
+
+  it("refuses a group start while a restore is walking the same profiles", async () => {
+    let settleRestore: ((result: { startedProfileIds: string[] }) => void) | undefined;
+    vi.spyOn(api, "restoreLastRunSet").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          settleRestore = resolve;
+        }),
+    );
+    const start = vi.spyOn(api, "startLaunchGroup");
+    const user = await openOverview();
+
+    await user.click(screen.getByRole("button", { name: "Restore previous run" }));
+
+    const startGroup = screen.getByRole("button", { name: "Start Abyss Studio stack" });
+    expect(startGroup).toBeDisabled();
+    await user.click(startGroup);
+    expect(start).not.toHaveBeenCalled();
+
+    await act(async () => {
+      settleRestore?.({ startedProfileIds: [] });
+    });
+
+    await waitFor(() => expect(startGroup).toBeEnabled());
+  });
+
   it("counts the members a whole-group stop could not stop and names the first", async () => {
     vi.spyOn(api, "stopLaunchGroup").mockResolvedValue({
       groupId: "group-studio",

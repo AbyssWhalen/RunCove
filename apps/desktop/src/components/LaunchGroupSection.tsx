@@ -25,6 +25,14 @@ interface LaunchGroupSectionProps {
   monitorOnly: boolean;
   /** Absent means idle; the value is what the buttons report while they wait. */
   busyGroups: ReadonlyMap<string, GroupAction>;
+  /**
+   * Whether a restore is walking the profiles right now.
+   *
+   * A restore starts profiles through the same per-profile reservation a group start
+   * uses, so running both at once only earns a refusal from whichever arrives second.
+   * Defaults to `false` so a caller that never restores need not pass it.
+   */
+  restoreBusy?: boolean;
   onNew: () => void;
   onEdit: (group: LaunchGroup) => void;
   onDelete: (group: LaunchGroup) => void;
@@ -44,6 +52,7 @@ export function LaunchGroupSection({
   projects,
   monitorOnly,
   busyGroups,
+  restoreBusy = false,
   onNew,
   onEdit,
   onDelete,
@@ -79,7 +88,10 @@ export function LaunchGroupSection({
             const pending = busyGroups.get(group.id);
             // An empty group is a group the profile cascade emptied. Its buttons are
             // dead rather than hidden, so the row still says which group needs editing.
-            const unusable = monitorOnly || pending !== undefined || members.length === 0;
+            // `restoreBusy` joins them because a restore is already walking these same
+            // profiles: leaving the button live would let a click land and do nothing.
+            const unusable =
+              monitorOnly || restoreBusy || pending !== undefined || members.length === 0;
             return (
               <li className="group-card" key={group.id}>
                 <div className="group-card__body">

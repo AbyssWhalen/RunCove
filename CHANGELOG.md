@@ -2,6 +2,34 @@
 
 All notable user-facing changes to RunCove are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- A restore and a whole-group start can no longer run at the same time, in either
+  order. Both walk launch profiles and start them through the same per-profile
+  reservation, so overlapping them made whichever arrived second fail with an
+  "already starting" message that named no cause the user could act on. The button
+  that would start the second one is now disabled while the first runs.
+- A failed restore now names the profile it stopped at as `Project / Profile`
+  instead of printing the internal profile id, which is what a whole-group failure
+  has always done.
+
+### Known Limitations
+
+- Starting two launch groups that share a member at the same time still fails on the
+  shared one. The group that reaches it second is refused, because the profile is
+  already being started, and the report names that member — accurate, but it reads
+  as a fault rather than a collision. Groups that share no members are unaffected.
+  Left as it is rather than made to wait, because blocking a group would also hold
+  up the members it does not share.
+- `sha256sum -c SHA256SUMS.txt` fails on every line of the checksum file published
+  with v0.4.0. The archives are intact and their hashes are correct: the release
+  workflow writes three spaces between the hash and the filename where the format
+  allows exactly two, so `sha256sum` reads the extra space as part of the name.
+  Until the workflow is corrected, verify with
+  `sed -E 's/^([0-9a-f]{64})[[:space:]]+/\1  /' SHA256SUMS.txt | sha256sum -c -`.
+
 ## [0.4.0] - 2026-08-31
 
 ### Added

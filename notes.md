@@ -1,5 +1,52 @@
 # RunCove Implementation Notes
 
+## 2026-08-31 Post-Release Review
+
+A read-through of the shipped v0.4.0 code, with the user's standing approval to fix what
+it found. One real defect, one regression the fix caused and its cause, and one fix that
+was written, measured against an existing test, and then withdrawn.
+
+- **A restore and a whole-group action could run at once, and the guards were asymmetric
+  in a way that hid it.** `runGroupAction` checked `restoreInFlight`, so clicking a group
+  during a restore was refused — but the button stayed live, so the click just did nothing.
+  The other direction was worse: `restoreLastRunSet` checked only its own latch, and the
+  restore button ignored `busyGroups`, so a restore started during a group action and both
+  walked overlapping profiles. Nothing corrupts — the backend reserves each profile — but
+  whichever arrived second failed with an "already starting" the user did nothing to cause.
+  Fixed at both layers, latch and button, because either alone leaves the other door open.
+- **Adding the profile label to the restore message broke two tests, and the cause is worth
+  keeping.** `profileLabel` closed over `snapshot`, so putting it in `restoreLastRunSet`'s
+  dependency list made that callback change identity on every one-second poll — and the
+  tray subscription effect depends on that identity, so it tore down and re-subscribed once
+  a second. The two tests that failed
+  (`coalesces repeated tray restore requests while restore is running` and the toolbar one)
+  were pinning exactly that. Fixed by reading the snapshot through a `latestSnapshot` ref so
+  the callback is referentially stable. The rule this leaves behind: a callback that feeds
+  an effect's dependency array must not close over the polled snapshot.
+- **The group-versus-group overlap fix was withdrawn after it contradicted a shipped test,
+  and the withdrawal is the decision.** Two groups may share a member, and starting both at
+  once makes the second fail on the shared one. A guard was written that made an overlapping
+  group wait, and it worked — but
+  `LaunchGroupSection.test.tsx`'s `locks a group's whole row while one of its actions is in
+  flight` asserts at its last line that a *different* group's Start stays enabled, and that
+  fixture's `Morning stack` `[db, web]` and `Everything down` `[web, astro]` share `web`. So
+  the guard and a deliberate, shipped assertion were in direct conflict. The restore case is
+  unambiguous (a restore walks *every* profile, so overlap is certain and total); this one is
+  a design trade — blocking the second group also holds up the members it does not share, and
+  the existing behavior of reporting the collision honestly is defensible. Changing a shipped
+  tested behavior on that kind of judgment is the user's call, not a reviewer's, so the guard
+  came out and the case is recorded as a known limitation in `CHANGELOG.md` instead. No
+  existing assertion was touched.
+- **Verified clean, so these are not suspects:** `launch-group.ts` handles the empty group
+  (`every` over nothing is vacuously true, and it returns `idle`); `PRAGMA foreign_keys` is
+  ON in both `Storage` constructors, so the `ON DELETE CASCADE` that justified real tables
+  over settings JSON actually fires; `save_launch_group`'s early returns drop the transaction,
+  which rolls it back; the eight `RunStatusReason` variants are all covered by
+  `run-status.ts`; and `zhCnMessages: Record<MessageKey, Message>` makes the compiler enforce
+  bilingual parity, which `typecheck` passing proves — 33 `group.*` keys each side.
+- **Both new tests were checked against a reverted fix, not just for passing.** Each fails
+  without its guard and passes with it. A test that is green either way pins nothing.
+
 ## 2026-08-31 P3 Housekeeping Disposition
 
 P3 had two halves. One was done, one was declined after measuring it, and the second is the
