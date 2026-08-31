@@ -2,7 +2,7 @@
 
 All notable user-facing changes to RunCove are documented in this file.
 
-## [Unreleased]
+## [0.4.0] - 2026-08-31
 
 ### Added
 
@@ -30,6 +30,13 @@ All notable user-facing changes to RunCove are documented in this file.
   so a Simplified Chinese interface no longer shows English sentences such as
   `Stopped by user` in the status toast or the log drawer. A reason this build does
   not recognize still falls back to the English sentence rather than to nothing.
+- Fields in the project editor keep their own names once validation errors appear. A
+  field whose error message sat inside its label used to take that message into its
+  accessible name, so a screen reader announced `Program This field is required.`
+  as the field's name and repeated the error, and the field no longer answered to
+  the name shown on screen.
+- Saving an existing project records the time it was saved. Every project's
+  modification time previously kept showing the time it was first added.
 
 ### Known Limitations
 

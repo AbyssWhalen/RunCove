@@ -2,37 +2,48 @@
 
 > Local dev services, under control.
 
-RunCove v0.3.0 is a Windows-first desktop control center for local development services. It combines live port inspection with a trusted project registry, structured launch profiles, process-tree control, session logs, and on-demand restoration of the projects that were running before the app exited.
+RunCove v0.4.0 is a Windows-first desktop control center for local development services. It combines live port inspection with a trusted project registry, structured launch profiles, process-tree control, session logs, named launch groups, and on-demand restoration of the projects that were running before the app exited.
 
 The distribution also includes the cross-platform `runcove` port-inspection CLI. The desktop application is Windows-first; the CLI is available on Windows, macOS, and Linux.
 
-The v0.3.0 release is distributed as a portable Windows x64 zip from the [RunCove Releases page](https://github.com/AbyssWhalen/RunCove/releases). The original v0.1.0 CLI release remains available in the release history for existing installations.
+The v0.4.0 release is distributed as a portable Windows x64 zip from the [RunCove Releases page](https://github.com/AbyssWhalen/RunCove/releases). The original v0.1.0 CLI release remains available in the release history for existing installations.
 
 ## Current Release / 当前版本
 
-RunCove v0.3.0 adds an opt-in run log archive while preserving the local-only
-and process-safety boundaries. / RunCove v0.3.0 新增可选的运行日志归档，同时保持
-本地运行与进程安全边界不变。
+RunCove v0.4.0 adds named launch groups while preserving the local-only and
+process-safety boundaries. / RunCove v0.4.0 新增具名启动组，同时保持本地运行与
+进程安全边界不变。
 
-- **Opt-in persistence / 按需持久化:** Archiving is off by default and affects
-  only runs started after you enable it. / 归档默认关闭，只影响开启后新启动的运行。
-- **Bounded storage / 有界存储:** Each session is limited to 10 MiB and the
-  archive directory to 200 MiB; finished archives are reclaimed oldest-first.
-  / 单会话上限 10 MiB，归档目录总量上限 200 MiB，超限时优先回收最早结束的归档。
-- **Visible loss / 明确记录丢失:** A bounded background queue never slows the
-  child process; dropped lines and bytes are reported instead of hidden.
-  / 有界后台队列不会拖慢子进程，丢弃的行数和字节数会被明确记录。
-- **History access / 历史查看:** Run history shows archive status, opens a
-  tail-first paged viewer, and supports confirmed deletion without removing the
-  run record. / 运行历史显示归档状态，查看器默认打开尾部并支持向前分页；删除归档时仍保留运行记录。
+- **Named and ordered / 具名有序:** A group is a named set of launch profiles in
+  the order you choose, and you can keep as many groups as you need. / 一个组是
+  按你指定顺序排列的一组启动配置，可以建任意多个。
+- **Across projects / 跨项目:** Members reference launch profiles directly, so
+  one group can bring up a database, an API, and a web front end together.
+  / 成员直接引用启动配置，所以一个组可以同时拉起数据库、API 和前端。
+- **Same launch path / 同一条启动路径:** Whole-group start waits for each
+  member's expected ports before the next one, and a member already running
+  counts as started. / 整组启动会在进入下一个成员前等待当前成员的期望端口；已在
+  运行的成员算作已启动。
+- **Honest failure / 失败如实报告:** A failed start stops before the next member,
+  keeps what already started, and names where it stopped; stop walks in reverse
+  and reports every member it could not stop. / 启动失败会停在下一个成员之前、
+  保留已启动的部分并指出卡在哪里；停止按逆序进行，并报告每个停不掉的成员。
+
+> [!IMPORTANT]
+> Launch groups need schema version 3, and the upgrade is one-way: once v0.4.0
+> has opened the database, v0.3.0 and earlier refuse it. Copy `runcove.sqlite3`
+> out of `%LOCALAPPDATA%\com.abysswhale.runcove\` first if you may need to go
+> back. / 启动组需要 schema 版本 3，且升级不可逆：v0.4.0 打开过数据库之后，
+> v0.3.0 及更早版本将拒绝打开它。如果你可能需要回退，请先把
+> `%LOCALAPPDATA%\com.abysswhale.runcove\runcove.sqlite3` 复制出来。
 
 ## Download And Run
 
-1. Download the RunCove v0.3.0 Windows x64 portable zip from the [Releases page](https://github.com/AbyssWhalen/RunCove/releases).
+1. Download the RunCove v0.4.0 Windows x64 portable zip from the [Releases page](https://github.com/AbyssWhalen/RunCove/releases).
 2. Extract the zip to a directory you control.
 3. Run `runcove-desktop.exe`.
 
-RunCove v0.3.0 is portable and does not include an installer. The executable is currently unsigned, so Windows SmartScreen may show an unknown-publisher warning; verify that the archive came from this repository's release before choosing to run it. RunCove uses the Microsoft Edge WebView2 Runtime, which is included with current Windows 11 installations and can be installed separately on older or stripped-down systems.
+RunCove v0.4.0 is portable and does not include an installer. The executable is currently unsigned, so Windows SmartScreen may show an unknown-publisher warning; verify that the archive came from this repository's release before choosing to run it. RunCove uses the Microsoft Edge WebView2 Runtime, which is included with current Windows 11 installations and can be installed separately on older or stripped-down systems.
 
 ## Desktop App
 
@@ -46,7 +57,7 @@ The desktop app is the primary RunCove experience. Its compact `Overview`, `Port
 - Capture stdout and stderr in an in-memory session log bounded both per line and across all profiles, with filtering, copy, and clear controls. The same drawer holds the opt-in run log archive switch, which is off by default and is the only way this output reaches a file.
 - Keep managed Windows process trees in Job Objects so stop and exit operations clean up child processes as well as their parent command.
 - Save the active launch order on explicit exit and restore it on demand, waiting for each profile's expected ports before starting the next one.
-- Keep named launch groups — ordered sets of launch profiles, across projects if you want, that start or stop as one unit. In development on `main` and not part of v0.3.0; see [Launch Groups](#launch-groups--启动组).
+- Keep named launch groups — ordered sets of launch profiles, across projects if you want, that start or stop as one unit. Added in v0.4.0; see [Launch Groups](#launch-groups--启动组).
 - Use the Windows title-bar close button to choose between hiding to the system tray and safely quitting. The optional remembered choice can be reset from Help > Safety; the tray still exposes open, restore, stop-all, and confirmed exit actions.
 - Open the in-app Help and usage guide from the top-bar question-mark button. It explains the first-run workflow, ports, projects, run history, the optional run log archive, conflict recovery, permissions, and safety boundaries in English or Simplified Chinese, with links back to Ports and Projects.
 
@@ -56,7 +67,7 @@ Windows IPv4 and IPv6 listeners are scanned independently. If an IPv6 table cann
 
 ## Run Log Archive / 运行日志归档
 
-The run log archive is opt-in and is **off by default**. It is included in v0.3.0. Note the one-way schema step described under [Architecture](#architecture) before switching back to an older build.
+The run log archive is opt-in and is **off by default**. It has been included since v0.3.0. Note the one-way schema step described under [Architecture](#architecture) before switching back to an older build.
 
 The switch sits in the log drawer, next to the session it belongs to. While it is off, RunCove writes no log file at all and session output stays in the bounded memory buffer described above.
 
@@ -75,9 +86,8 @@ The switch sits in the log drawer, next to the session it belongs to. While it i
 ## Launch Groups / 启动组
 
 A launch group is a named, ordered set of launch profiles that starts or stops as one
-unit. Groups live on `main` and are **not** part of v0.3.0; a build that has them
-upgrades the database to schema version 3, which is the one-way step described under
-[Architecture](#architecture).
+unit. Groups arrived in v0.4.0, which upgrades the database to schema version 3 — the
+one-way step described under [Architecture](#architecture).
 
 Restore answers "bring back what was running when I quit" — one implicit set, decided
 by the previous exit. A group answers "bring up this stack", is named, can be edited,
@@ -103,8 +113,8 @@ and there can be as many as you keep.
 - A group starts and stops only when you press its button. There is still no start at
   Windows login and no automatic project startup, by design.
 
-启动组是一个具名、有序的启动配置集合，可以一次启动或停止整套服务。它目前在 `main` 上
-开发，**不属于 v0.3.0**；带该功能的构建会把数据库升级到 schema 版本 3，属于
+启动组是一个具名、有序的启动配置集合，可以一次启动或停止整套服务。它在 v0.4.0 中加入，
+该版本会把数据库升级到 schema 版本 3，属于
 [Architecture](#architecture) 中说明的单向升级。成员可以跨项目，顺序即启动顺序，整组
 启动会像恢复一样逐个等待成员的期望端口；已经在运行的成员算作已启动，因此再次点击只会补
 齐缺失的部分。启动途中失败会停在该成员之前、保留已经启动的成员，并在提示中说明卡在哪一
@@ -139,7 +149,7 @@ Build the release executable from the same directory:
 npm run tauri build
 ```
 
-Tauri bundling is disabled because the public v0.3.0 artifact is a Windows x64 portable zip rather than an installer. The release executable is written below `apps/desktop/src-tauri/target/` and then packaged with the release documentation.
+Tauri bundling is disabled because the public v0.4.0 artifact is a Windows x64 portable zip rather than an installer. The release executable is written below `apps/desktop/src-tauri/target/` and then packaged with the release documentation.
 
 ### CLI
 
@@ -191,11 +201,11 @@ runcove/
 
 The React frontend has no direct filesystem, database, port-scanning, or process privileges. Typed Tauri commands and events connect it to the Rust backend, which owns those operations.
 
-The desktop database is created in RunCove's application-local data directory and migrated by schema version. It stores projects, launch profiles, expected ports, trusted port associations, run sessions, restore order, application settings, one index row per archived session since v0.3.0, and — on `main` — launch groups together with their ordered members. It never opens or modifies a project's own database.
+The desktop database is created in RunCove's application-local data directory and migrated by schema version. It stores projects, launch profiles, expected ports, trusted port associations, run sessions, restore order, application settings, one index row per archived session since v0.3.0, and launch groups together with their ordered members since v0.4.0. It never opens or modifies a project's own database.
 
 A build opens a database at its own schema version or older and refuses one that is newer, so this is a one-way step: after v0.3.0 has upgraded a database to schema version 2, v0.2.1 reports that version as newer than it supports and will not open it. Keep a copy of the data directory before first launching v0.3.0 if you may need to return to v0.2.1.
 
-The launch-group work on `main` adds schema version 3 the same way. Each upgrade runs in one transaction and stays at the previous version if it fails, but a successful one cannot be undone: once a version 3 database exists, v0.3.0 and every earlier build refuse it as newer than they support. **Back up RunCove's application-local data directory before running a `main` build for the first time** if you may need to return to v0.3.0.
+v0.4.0 adds schema version 3 for launch groups the same way. Each upgrade runs in one transaction and stays at the previous version if it fails, but a successful one cannot be undone: once a version 3 database exists, v0.3.0 and every earlier build refuse it as newer than they support. **Back up RunCove's application-local data directory before running v0.4.0 for the first time** if you may need to return to v0.3.0.
 
 Port ownership follows a deliberate trust order:
 
@@ -246,9 +256,9 @@ Generated `target/`, `dist/`, `node_modules/`, runtime database, and captured-lo
 
 Project discovery imports a selected npm or pnpm package/workspace root or performs a bounded best-effort recursive scan of a development root. The last successful development root is saved in RunCove's settings and scanned once on the next startup; findings remain review candidates and are never registered automatically. Unreadable or excessively deep unrelated subtrees are skipped without discarding valid projects already found. Workspace patterns are read from `package.json` and the common block-list or inline-list forms of `pnpm-workspace.yaml`.
 
-## v0.3.0 Scope
+## v0.4.0 Scope
 
-RunCove v0.3.0 adds the opt-in run log archive without expanding into unrelated integrations. It intentionally does not include:
+RunCove v0.4.0 adds named launch groups without expanding into unrelated integrations, exactly as v0.3.0 added the opt-in run log archive. Both are recorded in [CHANGELOG.md](CHANGELOG.md). RunCove still intentionally does not include:
 
 - Start at login or automatic project startup
 - Docker or remote-host management
