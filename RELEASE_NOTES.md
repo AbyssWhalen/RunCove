@@ -36,13 +36,14 @@ every morning becomes one button instead of several.
 
 ## Upgrade Note
 
-The desktop database migrates from schema version 2 to version 3 on first
-launch to store launch groups. The migration runs in one transaction and stays
-at version 2 if it fails, but a successful upgrade has no downgrade path:
-**v0.3.0 and earlier cannot open the resulting version 3 database.** Copy
-`runcove.sqlite3` out of RunCove's application-data directory
-(`%LOCALAPPDATA%\com.abysswhale.runcove\`) before launching v0.4.0 if you may
-need to return to an earlier version.
+The desktop database migrates to schema version 3 on first launch to store
+launch groups — from version 2 if you are coming from v0.3.0, and through
+version 2 if you are coming from an older release. Each migration runs in one
+transaction and stays at the previous version if it fails, but a successful
+upgrade has no downgrade path: **v0.3.0 and earlier cannot open the resulting
+version 3 database.** Copy `runcove.sqlite3` out of RunCove's application-data
+directory (`%LOCALAPPDATA%\com.abysswhale.runcove\`) before launching v0.4.0 if
+you may need to return to an earlier version.
 
 ## Known Limitations
 
