@@ -1,5 +1,58 @@
 # RunCove Implementation Notes
 
+## 2026-08-31 v0.4.0 Release Decisions
+
+- **The release preparation went on the feature branch, not on `main` after the merge.**
+  Version numbers, both Cargo lockfiles, `package-lock.json`, the changelog, the release
+  notes, and the README all landed in `f90b8a6` on `feat/launch-groups` so that PR CI would
+  run against them. The reason is asymmetric: `release.yml`'s CLI job builds with
+  `cargo build --locked` and `ci.yml` does not, so a lockfile that disagrees with a manifest
+  is invisible until the tag already exists — and by then the tag is the thing that would
+  have to be moved. `ci.yml` does run `npm ci`, so npm drift would have failed the PR
+  either way. Both packages were also checked locally with `cargo check --locked` before
+  the push.
+- **Three third-party crates sit at `0.3.0` in the desktop lockfile** — `dtor`,
+  `fallible-iterator`, `urlpattern` — so a blind search-and-replace of the old version
+  string would have corrupted it. Both lockfiles were regenerated with `cargo check`
+  instead of edited, and ours were identified by reading the surrounding
+  `[[package]] name = ` lines.
+- **The release note's upgrade path was widened after the first release-prep commit**
+  (`9e6ea53`). It said the database migrates "from schema version 2 to version 3", which is
+  the step v0.4.0 adds but not the path a v0.2.1 user takes — theirs goes through version 2
+  on the way. The consequence sentence was already right for everyone; the path was not, and
+  an irreversible schema step is the wrong place to be right for only the most recent
+  release. One extra CI cycle was cheaper than a release note that misdescribes a one-way
+  upgrade.
+- **`README.md`'s `## v0.3.0 Scope` became `## v0.4.0 Scope` rather than gaining a sibling.**
+  The launch-group plan said to keep the v0.3.0 section as a historical record and add a new
+  one, but that was written when the README still described v0.3.0 as the current release.
+  Two Scope sections would have carried the same seven-item exclusion list twice in a
+  user-facing file, and the per-release detail already lives in `CHANGELOG.md`, so the
+  duplicate was dropped and the exclusions kept.
+- **The published archives were verified against GitHub's stored-object digests, not by
+  downloading them.** `release-assets.githubusercontent.com` refused every connection from
+  this machine — `gh release download` and `curl -L` both reset, ~60 attempts across the
+  whole session, while `github.com` and `api.github.com` worked — so the v0.3.0 method of
+  downloading all five archives and running `sha256sum -c` was not available. What was done
+  instead: the `sha256sum` output printed by the `Publish GitHub release` job, which *is*
+  the content of the published `SHA256SUMS.txt`, was diffed against the `digest` field the
+  API reports for each stored asset. The two are produced independently — one on the runner
+  before upload, one by GitHub from the bytes it stored — and all five matched exactly. Say
+  what that proves and what it does not: the published bytes are what CI built and
+  `SHA256SUMS.txt` describes them correctly; whether a downloader elsewhere receives those
+  bytes is not something any check run from here could establish.
+- **The network to GitHub was unreliable all session and retrying was the right first
+  move, not diagnosing.** Pushes failed with `Recv failure: Connection was reset` and
+  `Failed to connect to github.com port 443` and then succeeded unchanged — one on the
+  third attempt, one on the sixth. No proxy is configured and none was added. A retry loop
+  written as `if git push ... | tail -2` is useless, because the pipeline's exit status is
+  `tail`'s; capture the output and test `$?` instead.
+- **The merge commit body carries no AI marker.** `bd2b777`, the v0.3.0 merge, contains
+  `[codex]`; `0d6b934` does not, and the subject follows the same
+  `Release RunCove vX.Y.Z (#N)` shape so the two releases still read as a series. The two
+  `[Qoder]` markers and that `[codex]` one stay where they are — rewriting published history
+  would break the tags and the release associations.
+
 ## 2026-08-31 Accessible Names: A Wrapping Label Absorbs Its Own Error Text
 
 - **The defect, measured before it was fixed.** Five fields in `ProjectModal.tsx` wrapped

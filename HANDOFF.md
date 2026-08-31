@@ -1,5 +1,72 @@
 # RunCove Handoff
 
+## 2026-08-31 v0.4.0 Published
+
+**RunCove v0.4.0 is released.** PR #4 is merged, `main` and `origin/main` are at the merge
+commit `0d6b934`, the annotated tag `v0.4.0` points at that same commit, and the GitHub
+Release is live and marked latest at
+https://github.com/AbyssWhalen/RunCove/releases/tag/v0.4.0 with six assets. The working
+tree is clean. Everything below this section describes states before the release; read this
+one for where things stand.
+
+The release is launch groups plus the three defects fixed alongside them — localized stop
+and exit reasons, project-editor accessible names, and a project's saved-at time. Both are
+recorded in `CHANGELOG.md` under `[0.4.0] - 2026-08-31`.
+
+Eight commits reached `main`, the last three of them release work:
+
+| Commit | Contents |
+| --- | --- |
+| `f8a2447` … `842efb9` | the four feature and fix commits described in the section below |
+| `f90b8a6` | `chore(release):` `0.4.0` in four manifests, three lockfiles regenerated, `CHANGELOG.md` closed, `RELEASE_NOTES.md` rewritten, `README.md` un-`main`-ed |
+| `9e6ea53` | `docs:` the upgrade note now covers the v0.2.1 → v0.4.0 path, not only v0.3.0 → v0.4.0 |
+| `0d6b934` | the `Release RunCove v0.4.0 (#4)` merge commit — **no AI marker in its body**, unlike `bd2b777` |
+
+**CI was green on every commit that mattered, and the release workflow ran clean.** Branch
+run [33380718489](https://github.com/AbyssWhalen/RunCove/actions/runs/33380718489) on
+`f90b8a6` proved the version bumps and the three regenerated lockfiles — all five jobs
+`success`, `Windows desktop` 9m13s. Run
+[33382118980](https://github.com/AbyssWhalen/RunCove/actions/runs/33382118980) on the tip
+`9e6ea53` was green the same way (`Windows desktop` 10m19s). Release run
+[33383018390](https://github.com/AbyssWhalen/RunCove/actions/runs/33383018390) passed all
+seven jobs, `Validate release version` included, so the tag matched all four manifests.
+
+**The published archives are verified, but not by the same method as v0.3.0 — state it
+that way.** `release-assets.githubusercontent.com` was unreachable from this machine for
+the whole attempt (`gh release download` and `curl` both failed with a reset connection on
+every one of ~60 tries, while `github.com` and `api.github.com` worked), so the artifacts
+could not be downloaded and hashed here. Instead the checksums the workflow computed on the
+runner — which are the literal bytes of the published `SHA256SUMS.txt`, read out of the
+`Publish GitHub release` job log — were diffed against GitHub's own `digest` for each
+stored asset from `gh api repos/.../releases/tags/v0.4.0`. All five archives are identical
+across those two independently produced sources, so the published bytes are what CI built
+and `SHA256SUMS.txt` describes them correctly. What this does *not* establish, and no check
+run from here could, is that a downloader on another network receives those bytes. A
+retry loop was left running afterwards in case the CDN recovered; it never did, and a
+final single-asset attempt at the end of the session still got `302` from `github.com`
+followed by a reset from the asset host, so the digest comparison is the whole of the
+artifact verification.
+
+The published release body was also diffed against `git show v0.4.0:RELEASE_NOTES.md` and
+matches apart from one trailing newline the API adds.
+
+**Operational state for actually using it.** The pre-upgrade backup sits at
+`%LOCALAPPDATA%\RunCove-backup-v0.3.0-2026-08-31\runcove.sqlite3`, and both it and the live
+database were re-read on release day at `user_version = 1` — so this machine's real
+database has still never been opened by a v0.3.0 or later build, and the first v0.4.0 launch
+will migrate it 1 → 2 → 3 in one go. The constraint that
+`apps/desktop/src-tauri/target/release/runcove-desktop.exe` must not be launched has now
+served its purpose and lapsed with the release: v0.4.0 is published, so opening a v0.4.0
+build against the real database is the intended next step rather than something to avoid.
+Prefer the published portable zip over that local build, since the zip is the artifact
+users get. Nothing here has launched either one.
+
+**Still unauthorized, each needing its own ask:** every P3 housekeeping item, including
+moving the agent-facing `V*_PLAN.md` and similar files out of the repository; any rewrite of
+published history (the `[codex]` marker in `bd2b777` and the two `[Qoder]` markers stay);
+and any change to `.github/workflows/`. The `feat/launch-groups` branch was left on
+`origin` rather than deleted.
+
 ## 2026-08-31 Committed, Pushed, And Open As PR #4
 
 The launch-group work is on **`feat/launch-groups`**, pushed to `origin`, and open as
