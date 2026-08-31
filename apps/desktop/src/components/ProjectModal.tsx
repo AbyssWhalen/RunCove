@@ -470,9 +470,10 @@ export function ProjectModal({
           <form className="project-form" noValidate onSubmit={(event) => void submit(event)}>
             <div className="form-grid form-grid--project">
               <label className="field">
-                <span>{t("project.name")}</span>
+                <span id="project-name-label">{t("project.name")}</span>
                 <input
                   value={form.name}
+                  aria-labelledby="project-name-label"
                   aria-invalid={showValidation && Boolean(validation?.name)}
                   aria-describedby={showValidation && validation?.name ? "project-name-error" : undefined}
                   onChange={(event) => setForm({ ...form, name: event.target.value })}
@@ -480,9 +481,10 @@ export function ProjectModal({
                 {showValidation && validation?.name && <span className="field-error" id="project-name-error">{t("project.validation.required")}</span>}
               </label>
               <label className="field field--path">
-                <span>{t("project.directory")}</span>
+                <span id="project-path-label">{t("project.directory")}</span>
                 <input
                   value={form.path}
+                  aria-labelledby="project-path-label"
                   aria-invalid={showValidation && Boolean(validation?.path)}
                   aria-describedby={showValidation && validation?.path ? "project-path-error" : undefined}
                   onChange={(event) => setForm({ ...form, path: event.target.value })}
@@ -545,9 +547,10 @@ export function ProjectModal({
                   </div>
                   <div className="form-grid form-grid--profile">
                     <label className="field">
-                      <span>{t("project.profileName")}</span>
+                      <span id={`profile-${index}-name-label`}>{t("project.profileName")}</span>
                       <input
                         value={profile.name}
+                        aria-labelledby={`profile-${index}-name-label`}
                         aria-invalid={showValidation && Boolean(validation?.profileErrors[index]?.name)}
                         aria-describedby={showValidation && validation?.profileErrors[index]?.name ? `profile-${index}-name-error` : undefined}
                         onChange={(event) => updateProfile(index, { name: event.target.value })}
@@ -557,9 +560,10 @@ export function ProjectModal({
                       )}
                     </label>
                     <label className="field">
-                      <span>{t("project.program")}</span>
+                      <span id={`profile-${index}-program-label`}>{t("project.program")}</span>
                       <input
                         value={profile.program}
+                        aria-labelledby={`profile-${index}-program-label`}
                         aria-invalid={showValidation && Boolean(validation?.profileErrors[index]?.program)}
                         aria-describedby={showValidation && validation?.profileErrors[index]?.program ? `profile-${index}-program-error` : undefined}
                         onChange={(event) => updateProfile(index, { program: event.target.value })}
@@ -569,9 +573,10 @@ export function ProjectModal({
                       )}
                     </label>
                     <label className="field field--wide">
-                      <span>{t("project.workingDirectory")}</span>
+                      <span id={`profile-${index}-cwd-label`}>{t("project.workingDirectory")}</span>
                       <input
                         value={profile.cwd}
+                        aria-labelledby={`profile-${index}-cwd-label`}
                         aria-invalid={showValidation && Boolean(validation?.profileErrors[index]?.cwd)}
                         aria-describedby={showValidation && validation?.profileErrors[index]?.cwd ? `profile-${index}-cwd-error` : undefined}
                         onChange={(event) => updateProfile(index, { cwd: event.target.value })}
