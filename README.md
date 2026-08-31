@@ -46,6 +46,7 @@ The desktop app is the primary RunCove experience. Its compact `Overview`, `Port
 - Capture stdout and stderr in an in-memory session log bounded both per line and across all profiles, with filtering, copy, and clear controls. The same drawer holds the opt-in run log archive switch, which is off by default and is the only way this output reaches a file.
 - Keep managed Windows process trees in Job Objects so stop and exit operations clean up child processes as well as their parent command.
 - Save the active launch order on explicit exit and restore it on demand, waiting for each profile's expected ports before starting the next one.
+- Keep named launch groups — ordered sets of launch profiles, across projects if you want, that start or stop as one unit. In development on `main` and not part of v0.3.0; see [Launch Groups](#launch-groups--启动组).
 - Use the Windows title-bar close button to choose between hiding to the system tray and safely quitting. The optional remembered choice can be reset from Help > Safety; the tray still exposes open, restore, stop-all, and confirmed exit actions.
 - Open the in-app Help and usage guide from the top-bar question-mark button. It explains the first-run workflow, ports, projects, run history, the optional run log archive, conflict recovery, permissions, and safety boundaries in English or Simplified Chinese, with links back to Ports and Projects.
 
@@ -70,6 +71,47 @@ The switch sits in the log drawer, next to the session it belongs to. While it i
 - If the archive cannot start — an unwritable data directory, for example — RunCove reports it next to the switch and keeps port scanning, project launch, and in-memory logs working.
 
 运行日志归档默认关闭，位于日志抽屉中的开关。开启后，此后启动的运行会把 stdout 与 stderr 写入 RunCove 数据目录下 `run-log-archives` 中的 JSON Lines 文件；**这些文件可能包含你的服务自己打印出的令牌或敏感信息**。单个会话上限 10 MiB，目录总量上限 200 MiB，超出时按最早的已完成归档回收；输出过快时会丢弃日志行而不拖慢子进程，丢失量一律计入历史记录，并在还能写入的位置补一条 gap 行——因写入失败或达到容量上限而关闭的归档不再补写，此时历史记录中的计数就是全部记录。关闭开关只影响新的运行，已经打开的归档会正常收尾。
+
+## Launch Groups / 启动组
+
+A launch group is a named, ordered set of launch profiles that starts or stops as one
+unit. Groups live on `main` and are **not** part of v0.3.0; a build that has them
+upgrades the database to schema version 3, which is the one-way step described under
+[Architecture](#architecture).
+
+Restore answers "bring back what was running when I quit" — one implicit set, decided
+by the previous exit. A group answers "bring up this stack", is named, can be edited,
+and there can be as many as you keep.
+
+- Members are launch profiles, referenced directly, so one group may span projects: a
+  database in one project, an API and a web front end in another.
+- The order you set is the startup order. Whole-group start walks it, waiting for each
+  member's expected ports before starting the next one, exactly as restore does.
+- A member that is already running counts as started, so pressing Start again only
+  fills in what is missing.
+- A failed start stops before the next member and keeps everything that already
+  started. The report names the member it stopped at and how many started before it,
+  and offers the same `View occupant` action as a single-profile port conflict.
+- Whole-group stop walks the members in reverse. A member that cannot be stopped does
+  not stop the rest: the report counts every failure and names the first one, because
+  interrupting a stop would only leave more processes running.
+- Each group shows its startup order and whether it is fully running, partly running,
+  or not running. That status is derived from the members' live status; RunCove stores
+  no separate group state.
+- Deleting a launch profile removes it from every group that used it. A group left
+  with no members stays visible and says so, rather than disappearing silently.
+- A group starts and stops only when you press its button. There is still no start at
+  Windows login and no automatic project startup, by design.
+
+启动组是一个具名、有序的启动配置集合，可以一次启动或停止整套服务。它目前在 `main` 上
+开发，**不属于 v0.3.0**；带该功能的构建会把数据库升级到 schema 版本 3，属于
+[Architecture](#architecture) 中说明的单向升级。成员可以跨项目，顺序即启动顺序，整组
+启动会像恢复一样逐个等待成员的期望端口；已经在运行的成员算作已启动，因此再次点击只会补
+齐缺失的部分。启动途中失败会停在该成员之前、保留已经启动的成员，并在提示中说明卡在哪一
+个成员、之前启动了几个；整组停止按相反顺序进行，某个成员停不掉不会中断其余成员，失败数
+量与第一个失败成员都会汇总出来。组状态（全部运行 / 部分运行 / 未运行）由成员的实时状态
+推导，后端不额外存储。删除启动配置会把它从所有组中移除，成员被清空的组仍然可见并给出说
+明。启动组只在你点击时启动：仍然没有开机自启，也没有自动启动项目。
 
 ## Build And Run
 
@@ -149,9 +191,11 @@ runcove/
 
 The React frontend has no direct filesystem, database, port-scanning, or process privileges. Typed Tauri commands and events connect it to the Rust backend, which owns those operations.
 
-The desktop database is created in RunCove's application-local data directory and migrated by schema version. It stores projects, launch profiles, expected ports, trusted port associations, run sessions, restore order, application settings, and — since v0.3.0 — one index row per archived session. It never opens or modifies a project's own database.
+The desktop database is created in RunCove's application-local data directory and migrated by schema version. It stores projects, launch profiles, expected ports, trusted port associations, run sessions, restore order, application settings, one index row per archived session since v0.3.0, and — on `main` — launch groups together with their ordered members. It never opens or modifies a project's own database.
 
 A build opens a database at its own schema version or older and refuses one that is newer, so this is a one-way step: after v0.3.0 has upgraded a database to schema version 2, v0.2.1 reports that version as newer than it supports and will not open it. Keep a copy of the data directory before first launching v0.3.0 if you may need to return to v0.2.1.
+
+The launch-group work on `main` adds schema version 3 the same way. Each upgrade runs in one transaction and stays at the previous version if it fails, but a successful one cannot be undone: once a version 3 database exists, v0.3.0 and every earlier build refuse it as newer than they support. **Back up RunCove's application-local data directory before running a `main` build for the first time** if you may need to return to v0.3.0.
 
 Port ownership follows a deliberate trust order:
 
@@ -195,8 +239,8 @@ npm run tauri build
 ```
 
 The Playwright flow uses the installed Microsoft Edge channel and covers the
-three primary views, logs, project import, browser console errors, and viewport
-overflow at `900x600`, `1280x720`, and `1440x900`.
+three primary views, logs, launch groups, project import, browser console errors,
+and viewport overflow at `900x600`, `1280x720`, and `1440x900`.
 
 Generated `target/`, `dist/`, `node_modules/`, runtime database, and captured-log data are not source artifacts and should not be committed.
 
