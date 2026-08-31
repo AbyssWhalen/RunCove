@@ -1,5 +1,51 @@
 # RunCove Implementation Notes
 
+## 2026-08-31 Accessible Names: A Wrapping Label Absorbs Its Own Error Text
+
+- **The defect, measured before it was fixed.** Five fields in `ProjectModal.tsx` wrapped
+  their `<input>` in a `<label>` that also renders that field's validation error, and the
+  accessible name of an input labelled by a wrapping `<label>` is the label's whole text
+  content. So the moment an error appeared, `Program` became
+  `Program This field is required.` and the field answered to a name nobody would look
+  for. The error was already wired through `aria-describedby`, so it was also being
+  announced twice. Confirmed as red first: the new test failed at
+  `getByLabelText("Project name")` with all five fields invalid, then passed after the
+  fix, with no other assertion touched.
+- **Why the existing suite could not see it.** `ProjectModal.test.tsx`'s validation test
+  queries every field *before* it submits and then holds the element references
+  (`:125-129`, asserting at `:135-136`), so it never asks for a field by name while an
+  error is on screen. That is the exact window the defect lives in — worth remembering as
+  a shape, not just as one bug: a query taken before the state change cannot observe a
+  name that only breaks after it.
+- **The fix is `id` + `aria-labelledby` on the caption**, matching `LaunchGroupModal.tsx`,
+  which pins the name to the caption regardless of what else the label renders. Five
+  source sites, three of them inside the profile loop so their ids carry the index:
+  `project-name-label`, `project-path-label`, and `profile-${index}-{name,program,cwd}-label`.
+  **Five, not the "~13" an earlier note estimated** — that number counted runtime
+  instances of the looped fields, and the source sites are what get edited.
+- **Deliberately unchanged**: the argument and expected-port inputs, whose labels are
+  `<div>`s and whose inputs already carry explicit `aria-label`s, and the root-import
+  checkbox, which needs its `aria-label` precisely because its label holds a paragraph of
+  project metadata.
+
+## 2026-08-31 Branch And PR: Three Commits Because Two Milestones Share Four Files
+
+- **P1 and P2 cannot be split by commit.** `models.rs`, `commands.rs`, `App.tsx`, and
+  `messages.ts` each carry both the run-status `reason` work and the launch-group work
+  (measured interleave: `commands.rs` group 46 / reason 16, `messages.ts` group 66 /
+  reason 18, `models.rs` group 12 / reason 30, `App.tsx` group 30 / reason 8). Splitting
+  them needs hunk-level staging, interactive `git add -p` is unavailable in this
+  environment, and the halves would not build. So the granularity chosen was **every
+  commit builds on its own**: `f8a2447` the matrix fix, `fc56693` all code, `6b80f61` all
+  documentation, `842efb9` the accessible-name fix. The feature commit's body records why
+  the run-status fix rides along, so the decision is auditable from `git log` alone.
+- **`git push` to `origin/feat/launch-groups` failed once with `Recv failure: Connection
+  was reset` and succeeded on the immediate retry**, with no proxy configured. Retry
+  before diagnosing; nothing was half-pushed.
+- The `gh pr create` body went through a file rather than a heredoc: a heredoc carrying
+  the body tripped bash's parser (`unexpected EOF while looking for matching '`). Write
+  the body to a file outside the repository and pass `--body-file`.
+
 ## 2026-08-31 P2 Decision: Launch Groups Add Persistence And A UI, Not A Second Launcher
 
 - **Decision: the runtime mechanism was already there, so the feature is persistence plus a

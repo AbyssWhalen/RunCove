@@ -1,5 +1,62 @@
 # RunCove Handoff
 
+## 2026-08-31 Committed, Pushed, And Open As PR #4
+
+The launch-group work is on **`feat/launch-groups`**, pushed to `origin`, and open as
+[PR #4](https://github.com/AbyssWhalen/RunCove/pull/4) against `main`. `main` and
+`origin/main` are **still at `cae4d28`** — nothing is merged — and no version file was
+touched, so all five manifests still read `0.3.0`. The working tree is clean. The section
+below this one describes the same feature before any of it was committed; read this one
+for where the code now lives.
+
+Four commits, chosen so that **each one builds on its own**:
+
+| Commit | Contents |
+| --- | --- |
+| `f8a2447` | `chore:` the `AGENTS.md` matrix fix — both Cargo packages spelled out |
+| `fc56693` | `feat:` all 30 code paths: schema 3, storage, commands, the whole frontend |
+| `6b80f61` | `docs:` `CHANGELOG.md`, `README.md`, `HANDOFF.md`, `notes.md` |
+| `842efb9` | `fix:` the project-editor accessible-name defect and its regression test |
+
+**P1 and P2 could not be separated**, and the reason is measured rather than preferred:
+`models.rs`, `commands.rs`, `App.tsx`, and `messages.ts` each contain both the run-status
+`reason` additions and the launch-group additions, interactive `git add -p` is unavailable
+here, and a hunk-level split would produce commits that do not build. `fc56693`'s body
+says so, so the decision is auditable from `git log` without this file.
+
+**The accessible-name defect is now fixed** — the item the previous section carried as
+still open. Five fields in `ProjectModal.tsx` wrapped their input in a `<label>` that also
+renders the field's validation error, so an input's accessible name became
+`Program This field is required.` as soon as validation ran, and the error was announced
+twice. Each caption now carries an `id` and each input an `aria-labelledby`, matching
+`LaunchGroupModal.tsx`. It is **five source sites, not the "~13"** the earlier note
+estimated — that number counted runtime instances of the three looped per-profile fields.
+The regression test clears all five fields, submits, and looks each one up by its own name
+while invalid; it was confirmed red before the fix. Frontend counts moved from
+26 files / 208 tests to **26 files / 209 tests**.
+
+Verified locally after the fix: `npm run lint`, `typecheck`, `test -- --run`
+(26 files / 209 tests), `build`, and `e2e` (7 passed) all clean. Both Cargo packages were
+left untouched by this commit — `git status` showed only the two `ProjectModal` files — so
+their numbers stand from the matrix run recorded below: root 38, desktop 250 + 1 ignored.
+
+**CI is green on `842efb9`**, the branch tip — run
+[33376342697](https://github.com/AbyssWhalen/RunCove/actions/runs/33376342697), all five
+jobs `success`: `Rust lint` (1m20s), `Windows desktop` (10m6s), and `CLI` on
+`ubuntu-latest` (23s), `macos-latest` (1m8s), and `windows-latest` (1m8s). This is the
+first CI run this feature has had, and it is the one that matters most: `Windows desktop`
+is the job that runs the desktop crate's tests, the frontend suite, and `tauri build` on
+the target platform, so it independently reproduces the local matrix rather than
+restating it. No workflow file was touched — opening the PR is what triggered it.
+
+**Still unauthorized, each needing its own ask:** merging PR #4; publishing `0.4.0` at all
+(the version bump across five manifests, the tag, the release workflow, the GitHub
+Release); and every P3 housekeeping item. Two operational notes carry forward unchanged:
+`apps/desktop/src-tauri/target/release/runcove-desktop.exe` is a **production-identifier
+build that must not be launched**, because opening it would upgrade the real database to
+schema 3 irreversibly; and the pre-upgrade backup of that database sits hash-verified at
+`%LOCALAPPDATA%\RunCove-backup-v0.3.0-2026-08-31\runcove.sqlite3`.
+
 ## 2026-08-31 P2 Done: Launch Groups, On Schema Version 3
 
 The v0.4.0 feature the user picked is implemented end to end and the full `AGENTS.md`
