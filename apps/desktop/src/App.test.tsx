@@ -609,6 +609,57 @@ describe("RunCove desktop shell", () => {
     );
   });
 
+  it("shows a lifecycle reason in the window's language, not the backend's English", async () => {
+    window.localStorage.setItem("runcove.language", "zh-CN");
+    let emitRunStatus: ((event: RunStatusEvent) => void) | undefined;
+    vi.spyOn(api, "onRunStatus").mockImplementation(async (handler) => {
+      emitRunStatus = handler;
+      return () => undefined;
+    });
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "启动配置" });
+    await waitFor(() => expect(emitRunStatus).toBeTypeOf("function"));
+    act(() => emitRunStatus?.({
+      profileId: "profile-studio-web",
+      status: "idle",
+      pid: null,
+      reason: { kind: "user-stop" },
+      message: "Stopped by user",
+      timestamp: Date.now(),
+    }));
+
+    const notice = await screen.findByRole("status");
+    expect(notice).toHaveTextContent("已由你停止");
+    expect(notice).not.toHaveTextContent("Stopped by user");
+  });
+
+  it("localizes the reason inside a failure alert too", async () => {
+    window.localStorage.setItem("runcove.language", "zh-CN");
+    let emitRunStatus: ((event: RunStatusEvent) => void) | undefined;
+    vi.spyOn(api, "onRunStatus").mockImplementation(async (handler) => {
+      emitRunStatus = handler;
+      return () => undefined;
+    });
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "启动配置" });
+    await waitFor(() => expect(emitRunStatus).toBeTypeOf("function"));
+    act(() => emitRunStatus?.({
+      profileId: "profile-studio-web",
+      status: "exited",
+      pid: null,
+      reason: { kind: "exited-unexpectedly", code: 7 },
+      message: "Process exited unexpectedly with exit code 7",
+      unexpected: true,
+      timestamp: Date.now(),
+    }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "运行状态异常：进程异常退出，退出码 7",
+    );
+  });
+
   it("stacks a lifecycle error without covering an active success notice", async () => {
     let emitRunStatus: ((event: RunStatusEvent) => void) | undefined;
     let emitLifecycleError: ((message: string) => void) | undefined;

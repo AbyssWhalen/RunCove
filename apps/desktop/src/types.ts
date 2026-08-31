@@ -59,6 +59,61 @@ export interface RestoreSet {
   savedAt?: number | null;
 }
 
+/**
+ * A named, ordered set of launch profiles the user starts and stops as a unit.
+ *
+ * `profileIds` is the launch order. Members may span projects, and the list can be
+ * empty for a group whose every member profile was deleted — deleting a profile
+ * removes it from each group rather than deleting the group.
+ */
+export interface LaunchGroup {
+  id: string;
+  name: string;
+  profileIds: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** `id` is absent for a new group and set when editing an existing one. */
+export interface LaunchGroupInput {
+  id?: string;
+  name: string;
+  profileIds: string[];
+}
+
+/**
+ * What a whole-group start did.
+ *
+ * A start stops at the first member that failed, so `startedProfileIds` is what is
+ * running now and `failedProfileId` is where the sequence stopped. Anything after it
+ * was never attempted.
+ */
+export interface LaunchGroupStartResult {
+  groupId: string;
+  startedProfileIds: string[];
+  failedProfileId?: string | null;
+  error?: string | null;
+  relatedPort?: RelatedPort | null;
+}
+
+/**
+ * What a whole-group stop did.
+ *
+ * Unlike a start, a stop does not give up at the first refusal: cutting it short
+ * would leave running exactly the processes the user asked to be rid of. So every
+ * member is attempted and `failures` collects the ones that refused.
+ */
+export interface LaunchGroupStopResult {
+  groupId: string;
+  stoppedProfileIds: string[];
+  failures: LaunchGroupStopFailure[];
+}
+
+export interface LaunchGroupStopFailure {
+  profileId: string;
+  error: string;
+}
+
 export interface AppSettings {
   pollIntervalMs: number;
   logCapacity: number;
@@ -75,6 +130,7 @@ export interface DashboardSnapshot {
   ports: PortSnapshot[];
   projects: Project[];
   restoreSet: RestoreSet;
+  launchGroups: LaunchGroup[];
   settings: AppSettings;
   privilege: PrivilegeStatus;
   generatedAt: number;
@@ -128,10 +184,28 @@ export interface ProjectInput {
   profiles: LaunchProfileInput[];
 }
 
+/**
+ * Why a run's status changed, as the backend reports it.
+ *
+ * The backend cannot know which language the window is showing, so it sends this
+ * instead of a sentence and keeps its English wording in `message` / `line` for
+ * the run log and for a `kind` this build has never heard of. `kind` stays a plain
+ * `string` because nothing validates an IPC payload at runtime: an unrecognized
+ * value has to fall back to that English text rather than render nothing.
+ */
+export interface RunStatusReason {
+  kind: string;
+  /** The exit code, on `exited-unexpectedly`. */
+  code?: number | null;
+  /** The operating system's own words, on `wait-failed`. */
+  detail?: string | null;
+}
+
 export interface RunStatusEvent {
   profileId: string;
   status: ProfileStatus;
   pid?: number | null;
+  reason?: RunStatusReason | null;
   message?: string | null;
   unexpected?: boolean;
   relatedPort?: RelatedPort | null;
@@ -147,6 +221,8 @@ export interface RunLogEvent {
   profileId: string;
   stream: "stdout" | "stderr" | "system";
   line: string;
+  /** Set only on a `system` line RunCove wrote about the run's own lifecycle. */
+  reason?: RunStatusReason | null;
   timestamp: number;
 }
 
@@ -302,6 +378,10 @@ export interface RunCoveApi {
   stopProfile(profileId: string): Promise<RunStatusEvent>;
   restartProfile(profileId: string): Promise<RunStatusEvent>;
   restoreLastRunSet(): Promise<RestoreResult>;
+  saveLaunchGroup(group: LaunchGroupInput): Promise<LaunchGroup>;
+  deleteLaunchGroup(groupId: string): Promise<void>;
+  startLaunchGroup(groupId: string): Promise<LaunchGroupStartResult>;
+  stopLaunchGroup(groupId: string): Promise<LaunchGroupStopResult>;
   terminateExternalProcess(request: ExternalProcessRequest): Promise<void>;
   confirmPortAssociation(request: ConfirmAssociationRequest): Promise<void>;
   clearLogs(profileId: string): Promise<void>;

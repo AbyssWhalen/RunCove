@@ -14,12 +14,13 @@ mod storage;
 
 use crate::archive_service::ArchiveService;
 use crate::commands::{
-    clear_logs, confirm_port_association, delete_project, delete_run_log_archive, discover_project,
-    get_app_settings, get_dashboard_snapshot, get_logs, get_run_history, hide_to_tray, open_port,
-    open_project_directory, read_run_log_archive, request_elevated_monitoring, restart_profile,
-    restore_last_run_set, save_project, scan_development_root, scan_saved_development_root,
-    set_close_behavior, set_language_preference, set_run_log_archiving, shutdown, shutdown_app,
-    start_profile, stop_profile, terminate_external_process,
+    clear_logs, confirm_port_association, delete_launch_group, delete_project,
+    delete_run_log_archive, discover_project, get_app_settings, get_dashboard_snapshot, get_logs,
+    get_run_history, hide_to_tray, open_port, open_project_directory, read_run_log_archive,
+    request_elevated_monitoring, restart_profile, restore_last_run_set, save_launch_group,
+    save_project, scan_development_root, scan_saved_development_root, set_close_behavior,
+    set_language_preference, set_run_log_archiving, shutdown, shutdown_app, start_launch_group,
+    start_profile, stop_launch_group, stop_profile, terminate_external_process,
 };
 use crate::language::{tray_labels, tray_status_text, DisplayLanguage};
 use crate::models::{CloseBehavior, LanguagePreference};
@@ -271,6 +272,10 @@ pub fn run() {
             stop_profile,
             restart_profile,
             restore_last_run_set,
+            save_launch_group,
+            delete_launch_group,
+            start_launch_group,
+            stop_launch_group,
             request_elevated_monitoring,
             terminate_external_process,
             confirm_port_association,

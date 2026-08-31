@@ -2622,11 +2622,17 @@ impl ArchiveWriter {
     /// the batch ends by flushing it, and the archive is going to hold it. The one
     /// place that is not exact is a flush that fails after a line was buffered — the
     /// close then measures the file and corrects `byte_size` and the quota from the
-    /// disk, but `line_count` can still name a line the file does not hold. A count of
-    /// pending lines would not fix it either: a flush can also go out *partially*, so
-    /// saying which buffered lines survived needs each one's byte length, and the byte
-    /// side is already corrected from the disk. Describing a failed disk that precisely
-    /// is not worth the state it would take.
+    /// disk, but `line_count` can still name a line the file does not hold. Accepted as
+    /// a disclosed limitation on 2026-08-30 rather than fixed, and both candidate fixes
+    /// were weighed. Counting at flush boundaries does not work: a flush can also go out
+    /// *partially*, so saying which buffered lines survived needs each one's byte length,
+    /// and the byte side is already corrected from the disk. Recounting the file, the way
+    /// this close already measures it, does not either — the count would have to agree
+    /// with [`Sweep::count_lines`], which counts a trailing fragment as a line, whereas a
+    /// short write here reports that fragment as a dropped line and `line_count` 0, so the
+    /// same file would read one line longer after a crash than after a close. What is left
+    /// is display-only and always an over-count, on a row already labeled `partial` /
+    /// `write-error`: the one number nobody decides on is the one left imprecise.
     fn return_file(&self, session_id: &str, file: ArchiveHandle, lines: i64, bytes: u64) {
         let mut open = self.open_sessions();
         match open.get_mut(session_id) {

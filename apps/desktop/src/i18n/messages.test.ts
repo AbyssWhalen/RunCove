@@ -122,6 +122,93 @@ describe("localized message formatting", () => {
     }
   });
 
+  it("provides every launch group label in both languages", () => {
+    const messages: Array<[MessageKey, string, string, MessageParams?]> = [
+      ["count.groups", "1 group", "1 个启动组", { count: 1 }],
+      ["count.groups", "2 groups", "2 个启动组", { count: 2 }],
+      ["group.title", "Launch groups", "启动组"],
+      ["group.subtitle", "Start or stop a whole stack in one step, in the order you set.", "按你设定的顺序，一步启动或停止整套服务。"],
+      ["group.empty", "No launch groups yet. Create one to bring up a whole stack at once.", "还没有启动组。新建一个，就能一次拉起整套服务。"],
+      ["group.new", "New group", "新建启动组"],
+      ["group.newTitle", "New launch group", "新建启动组"],
+      ["group.edit", "Edit Full stack", "编辑 Full stack", { group: "Full stack" }],
+      ["group.delete", "Delete Full stack", "删除 Full stack", { group: "Full stack" }],
+      ["group.start", "Start Full stack", "启动 Full stack", { group: "Full stack" }],
+      ["group.stop", "Stop Full stack", "停止 Full stack", { group: "Full stack" }],
+      ["group.starting", "Starting...", "启动中..."],
+      ["group.stopping", "Stopping...", "停止中..."],
+      ["group.order", "Startup order", "启动顺序"],
+      ["group.noMembers", "Every profile in this group was deleted. Edit the group to add profiles.", "该组内的启动配置都已被删除，请编辑该组重新添加。"],
+      ["group.missingMember", "profile-gone - profile not found", "profile-gone - 未找到该配置", { profile: "profile-gone" }],
+      ["group.status.running", "All running", "全部运行中"],
+      ["group.status.partial", "Partly running", "部分运行中"],
+      ["group.status.idle", "Not running", "未运行"],
+      ["group.name", "Group name", "启动组名称"],
+      ["group.namePlaceholder", "Full stack", "全栈服务"],
+      ["group.members", "Launch profiles", "启动配置"],
+      ["group.membersHint", "Select the profiles this group starts. The order on the right is the startup order.", "勾选该组要启动的配置；右侧的顺序就是启动顺序。"],
+      ["group.selectedEmpty", "Nothing selected yet", "尚未选择任何配置"],
+      ["group.noProfiles", "Add a project with launch profiles first.", "请先添加带启动配置的项目。"],
+      ["group.moveUp", "Move Studio / Web earlier", "将 Studio / Web 上移", { profile: "Studio / Web" }],
+      ["group.moveDown", "Move Studio / Web later", "将 Studio / Web 下移", { profile: "Studio / Web" }],
+      ["group.remove", "Remove Studio / Web", "移除 Studio / Web", { profile: "Studio / Web" }],
+      ["group.saving", "Saving...", "保存中..."],
+      ["group.save", "Save group", "保存启动组"],
+      ["group.deleteWarning", "Remove Full stack from RunCove? Its launch profiles are kept, and nothing that is running will be stopped.", "从 RunCove 中删除 Full stack？组内的启动配置会保留，正在运行的进程也不会被停止。", { group: "Full stack" }],
+      ["group.deleteConfirm", "Delete group", "删除启动组"],
+      ["group.validation.nameRequired", "A group name is required.", "请填写启动组名称。"],
+      ["group.validation.nameDuplicate", "Another launch group already uses this name.", "已有同名的启动组。"],
+      ["group.validation.membersRequired", "Select at least one launch profile.", "请至少选择一个启动配置。"],
+      ["notice.groupSaved", "Launch group saved", "启动组已保存"],
+      ["notice.groupDeleted", "Launch group deleted", "启动组已删除"],
+    ];
+
+    for (const [key, english, chinese, params] of messages) {
+      expectBilingual(key, english, chinese, params);
+    }
+  });
+
+  // A whole-group run stops at one member and leaves the earlier ones running, so
+  // both failure lines have to say how far it got and which member it stopped at.
+  // "Start failed" alone would send the user hunting through every window.
+  it("reports how far a whole-group run got, and where it stopped, in both languages", () => {
+    const group = "Full stack";
+    const messages: Array<[MessageKey, string, string, MessageParams?]> = [
+      ["notice.groupStarted", "Full stack: started 1 profile", "Full stack：已启动 1 个配置", { group, count: 1 }],
+      ["notice.groupStarted", "Full stack: started 3 profiles", "Full stack：已启动 3 个配置", { group, count: 3 }],
+      ["notice.groupStopped", "Full stack: stopped 1 profile", "Full stack：已停止 1 个配置", { group, count: 1 }],
+      ["notice.groupStopped", "Full stack: stopped 2 profiles", "Full stack：已停止 2 个配置", { group, count: 2 }],
+      [
+        "error.groupStartPartial",
+        "Full stack: 1 profile was started before Studio / Web failed: port 5173 is occupied",
+        "Full stack：已启动 1 个配置，随后 Studio / Web 启动失败：port 5173 is occupied",
+        { group, count: 1, profile: "Studio / Web", detail: "port 5173 is occupied" },
+      ],
+      [
+        "error.groupStartPartial",
+        "Full stack: 2 profiles were started before Studio / Web failed: port 5173 is occupied",
+        "Full stack：已启动 2 个配置，随后 Studio / Web 启动失败：port 5173 is occupied",
+        { group, count: 2, profile: "Studio / Web", detail: "port 5173 is occupied" },
+      ],
+      [
+        "error.groupStopPartial",
+        "Full stack: 1 profile could not be stopped. Studio / API: Access is denied",
+        "Full stack：有 1 个配置未能停止。Studio / API：Access is denied",
+        { group, count: 1, profile: "Studio / API", detail: "Access is denied" },
+      ],
+      [
+        "error.groupStopPartial",
+        "Full stack: 2 profiles could not be stopped. Studio / API: Access is denied",
+        "Full stack：有 2 个配置未能停止。Studio / API：Access is denied",
+        { group, count: 2, profile: "Studio / API", detail: "Access is denied" },
+      ],
+    ];
+
+    for (const [key, english, chinese, params] of messages) {
+      expectBilingual(key, english, chinese, params);
+    }
+  });
+
   it("provides every run log archive label in both languages", () => {
     const messages: Array<[MessageKey, string, string, MessageParams?]> = [
       ["archive.toggleLabel", "Archive run logs", "归档运行日志"],

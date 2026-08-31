@@ -270,6 +270,45 @@ describe("LogDrawer failures", () => {
       Object.defineProperty(navigator, "clipboard", { configurable: true, value: clipboard });
     }
   });
+  it("shows a lifecycle line in the window's language and copies what it shows", async () => {
+    window.localStorage.setItem("runcove.language", "zh-CN");
+    const clipboard = navigator.clipboard;
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const lifecycle: RunLogEvent = {
+      ...log,
+      stream: "system",
+      line: "Process exited unexpectedly with exit code 7",
+      reason: { kind: "exited-unexpectedly", code: 7 },
+    };
+
+    try {
+      render(
+        <I18nProvider>
+          <LogDrawer
+            api={logApi({ getLogs: vi.fn().mockResolvedValue([lifecycle, { ...log, timestamp: 2 }]) })}
+            profile={profile}
+            project={project}
+            capacity={100}
+            {...archiveProps}
+            onClose={vi.fn()}
+          />
+        </I18nProvider>,
+      );
+
+      await screen.findByText("进程异常退出，退出码 7");
+      expect(screen.queryByText(lifecycle.line)).not.toBeInTheDocument();
+      // The child process's own output is never rewritten.
+      expect(screen.getByText("ready")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "复制当前日志" }));
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith(
+        "[system] 进程异常退出，退出码 7\n[stdout] ready",
+      ));
+    } finally {
+      Object.defineProperty(navigator, "clipboard", { configurable: true, value: clipboard });
+    }
+  });
 });
 
 describe("LogDrawer run log archiving", () => {

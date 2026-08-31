@@ -29,6 +29,31 @@ async function expectNoHorizontalOverflow(page: Page) {
   expect(widths.content).toBeLessThanOrEqual(widths.viewport);
 }
 
+/**
+ * One row sits inside the viewport and none of its controls are pushed out of it.
+ *
+ * `scrollWidth` cannot answer this: every `IconButton` carries an absolutely
+ * positioned `::after` tooltip up to 220px wide that is invisible until hover, so a
+ * row that fits the screen exactly still reports overflow. Buttons are what get
+ * measured because they are the part that cannot shrink — the ordered member list is
+ * a horizontal scroll container by design.
+ */
+async function expectRowFitsViewport(page: Page, row: Locator) {
+  const box = await row.boundingBox();
+  expect(box).not.toBeNull();
+  const viewport = page.viewportSize();
+  expect(viewport).not.toBeNull();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(viewport!.width);
+  const escaping = await row.evaluate((element: HTMLElement) => {
+    const limit = element.getBoundingClientRect().right;
+    return Array.from(element.querySelectorAll<HTMLElement>("button"))
+      .filter((button) => button.getBoundingClientRect().right > limit)
+      .map((button) => button.getAttribute("aria-label") ?? button.textContent ?? "");
+  });
+  expect(escaping).toEqual([]);
+}
+
 async function openAppAfterEdgeColdStart(initialPage: Page, viewport: { width: number; height: number }) {
   const context = initialPage.context();
   let page = initialPage;
@@ -71,11 +96,24 @@ for (const viewport of viewports) {
     await expect(page.getByRole("heading", { name: "Recent runs" })).toBeVisible();
     await expectNoHorizontalOverflow(page);
 
+    // A group card carries an ordered member list beside four action buttons, so it is
+    // the widest row Overview adds and 900x600 is where it would run out of room.
+    const groupCard = page.locator(".group-card").filter({ hasText: "Abyss Studio stack" });
+    await expect(page.getByRole("heading", { name: "Launch groups", exact: true })).toBeVisible();
+    await expect(groupCard.getByText("Partly running")).toBeVisible();
+    await expect(groupCard.getByRole("list", { name: "Startup order" })).toContainText(
+      "Abyss Studio / API",
+    );
+    await expectRowFitsViewport(page, groupCard);
+
     const language = page.locator(".language-picker select");
     await language.selectOption("zh-CN");
     await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
     await expect(page.getByRole("heading", { name: "启动配置" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "最近运行" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "启动组", exact: true })).toBeVisible();
+    await expect(groupCard.getByText("部分运行中")).toBeVisible();
+    await expectRowFitsViewport(page, groupCard);
     await expectNoHorizontalOverflow(page);
 
     await page.getByRole("button", { name: "查看全部" }).click();
@@ -206,6 +244,35 @@ for (const viewport of viewports) {
     expect(browserErrors).toEqual([]);
   });
 }
+
+// The band renders in the walk above; this proves the buttons reach the commands and
+// that the report says how many members moved. A group action that silently does
+// nothing looks identical to one that worked, so the notice is the assertion.
+test("a whole-group start and stop reach the commands and report what moved", async ({ page: initialPage }) => {
+  const browserErrors = captureBrowserErrors(initialPage);
+  const page = await openAppAfterEdgeColdStart(initialPage, viewports[0]);
+
+  const groupCard = page.locator(".group-card").filter({ hasText: "Abyss Studio stack" });
+  await expect(groupCard.getByText("Partly running")).toBeVisible();
+
+  await groupCard.getByRole("button", { name: "Start Abyss Studio stack" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Abyss Studio stack" })).toContainText(
+    "Abyss Studio stack: started 2 profiles",
+  );
+  await expect(groupCard.getByText("All running")).toBeVisible();
+  // Up already, so starting again is refused by the row rather than by the backend.
+  await expect(groupCard.getByRole("button", { name: "Start Abyss Studio stack" })).toBeDisabled();
+  await expectRowFitsViewport(page, groupCard);
+
+  await groupCard.getByRole("button", { name: "Stop Abyss Studio stack" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Abyss Studio stack" })).toContainText(
+    "Abyss Studio stack: stopped 2 profiles",
+  );
+  await expect(groupCard.getByText("Not running")).toBeVisible();
+  await expect(groupCard.getByRole("button", { name: "Stop Abyss Studio stack" })).toBeDisabled();
+  await expectNoHorizontalOverflow(page);
+  expect(browserErrors).toEqual([]);
+});
 
 test("project editor copies a profile and reports field-level validation", async ({ page: initialPage }) => {
   const browserErrors = captureBrowserErrors(initialPage);

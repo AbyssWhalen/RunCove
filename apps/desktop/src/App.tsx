@@ -15,6 +15,8 @@ import { CloseChoiceModal } from "./components/CloseChoiceModal";
 import { ConfirmModal } from "./components/ConfirmModal";
 import { HelpDrawer } from "./components/HelpDrawer";
 import { IconButton } from "./components/IconButton";
+import { LaunchGroupModal } from "./components/LaunchGroupModal";
+import type { GroupAction } from "./components/LaunchGroupSection";
 import { LogDrawer } from "./components/LogDrawer";
 import { OverviewView } from "./components/OverviewView";
 import { PortsView } from "./components/PortsView";
@@ -29,10 +31,13 @@ import { I18nProvider, LANGUAGE_STORAGE_KEY, useI18n } from "./i18n";
 import type { LanguagePreference, MessageKey } from "./i18n";
 import { isLanguagePreference } from "./i18n/context";
 import { getOpenableProfilePort } from "./profile-actions";
+import { runStatusText } from "./run-status";
 import type {
   DashboardSnapshot,
   CloseBehavior,
   DiscoveredProject,
+  LaunchGroup,
+  LaunchGroupInput,
   LaunchProfile,
   PortSnapshot,
   ProfileStatus,
@@ -44,6 +49,8 @@ import type {
 
 type ActiveView = "overview" | "ports" | "projects";
 type ProjectModalState = Project | "import" | null;
+/** `"new"` opens the editor empty; a group opens it on that group. */
+type GroupModalState = LaunchGroup | "new" | null;
 type DiscoveryState = "idle" | "scanning" | "candidates" | "empty" | "error";
 type PortFocus = { port: number; protocol: PortSnapshot["protocol"]; nonce: number };
 
@@ -115,6 +122,14 @@ function AppShell() {
   const [projectModal, setProjectModal] = useState<ProjectModalState>(null);
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   const [projectDeleteBusy, setProjectDeleteBusy] = useState(false);
+  const [groupModal, setGroupModal] = useState<GroupModalState>(null);
+  const [groupSaving, setGroupSaving] = useState(false);
+  const [groupSaveError, setGroupSaveError] = useState<string | null>(null);
+  const [groupToDelete, setGroupToDelete] = useState<LaunchGroup | null>(null);
+  const [groupDeleteBusy, setGroupDeleteBusy] = useState(false);
+  // Which whole-group action each busy group is running, so its buttons can say
+  // "Starting" or "Stopping" instead of a shared "working".
+  const [busyGroups, setBusyGroups] = useState<ReadonlyMap<string, GroupAction>>(new Map());
   const [discoverySuggestions, setDiscoverySuggestions] = useState<DiscoveredProject[] | null>(null);
   const [discoveryState, setDiscoveryState] = useState<DiscoveryState>("idle");
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
@@ -140,6 +155,9 @@ function AppShell() {
   const profileActionsInFlight = useRef(new Set<string>());
   const restoreInFlight = useRef(false);
   const projectDeleteInFlight = useRef(false);
+  const groupActionsInFlight = useRef(new Set<string>());
+  const groupSaveInFlight = useRef(false);
+  const groupDeleteInFlight = useRef(false);
   const archiveDeleteInFlight = useRef(false);
   const shutdownInFlight = useRef(false);
   const closeChoiceRequested = useRef(false);
@@ -264,11 +282,12 @@ function AppShell() {
       if (previous && event.timestamp < previous.timestamp) return;
       profileStatusEvents.current.set(event.profileId, event);
       setSnapshot((current) => current ? replaceProfileStatus(current, event) : current);
-      if (event.message) {
+      const text = runStatusText(event, t);
+      if (text) {
         if (event.status === "conflict" || event.status === "unknown" || event.unexpected) {
-          showError(t("error.lifecycleDetail", { detail: event.message }), event.relatedPort);
+          showError(t("error.lifecycleDetail", { detail: text }), event.relatedPort);
         } else {
-          setNotice(event.message);
+          setNotice(text);
         }
       }
       if (event.status === "exited" || event.unexpected) void loadRunHistory();
@@ -440,6 +459,117 @@ function AppShell() {
       setRestoreBusy(false);
     }
   }, [loadRunHistory, loadSnapshot, showError, t]);
+
+  /**
+   * `Project / Profile` for a profile id, or the raw id when no project claims it.
+   *
+   * A group failure has to name the member it stopped at — an id alone does not tell
+   * the user which window to look at — and the member may live in any project.
+   */
+  const profileLabel = (profileId: string) => {
+    const entry = snapshot?.projects
+      .flatMap((project) => project.profiles.map((profile) => ({ project, profile })))
+      .find(({ profile }) => profile.id === profileId);
+    return entry ? `${entry.project.name} / ${entry.profile.name}` : profileId;
+  };
+
+  /**
+   * Run one whole-group action and report what it actually did.
+   *
+   * The two halves are deliberately asymmetric, because the backend is: a start stops
+   * at the first refusal and leaves the earlier members running, so the report names
+   * that member; a stop attempts every member and collects the refusals, so the report
+   * counts them and names the first.
+   */
+  const runGroupAction = async (group: LaunchGroup, action: GroupAction) => {
+    if (restoreInFlight.current || groupActionsInFlight.current.has(group.id)) return;
+    groupActionsInFlight.current.add(group.id);
+    setBusyGroups((current) => new Map(current).set(group.id, action));
+    try {
+      if (action === "start") {
+        const result = await api.startLaunchGroup(group.id);
+        await loadSnapshot(true);
+        await loadRunHistory();
+        if (result.error) {
+          showError(t("error.groupStartPartial", {
+            group: group.name,
+            count: result.startedProfileIds.length,
+            profile: result.failedProfileId ? profileLabel(result.failedProfileId) : "-",
+            detail: result.error,
+          }), result.relatedPort);
+        } else {
+          setNotice(t("notice.groupStarted", {
+            group: group.name,
+            count: result.startedProfileIds.length,
+          }));
+        }
+      } else {
+        const result = await api.stopLaunchGroup(group.id);
+        await loadSnapshot(true);
+        await loadRunHistory();
+        const [firstFailure] = result.failures;
+        if (firstFailure) {
+          showError(t("error.groupStopPartial", {
+            group: group.name,
+            count: result.failures.length,
+            profile: profileLabel(firstFailure.profileId),
+            detail: firstFailure.error,
+          }));
+        } else {
+          setNotice(t("notice.groupStopped", {
+            group: group.name,
+            count: result.stoppedProfileIds.length,
+          }));
+        }
+      }
+    } catch (reason) {
+      showError(errorMessage(reason));
+    } finally {
+      groupActionsInFlight.current.delete(group.id);
+      setBusyGroups((current) => {
+        const next = new Map(current);
+        next.delete(group.id);
+        return next;
+      });
+    }
+  };
+
+  const saveGroup = async (input: LaunchGroupInput) => {
+    if (groupSaveInFlight.current) return;
+    groupSaveInFlight.current = true;
+    setGroupSaving(true);
+    setGroupSaveError(null);
+    try {
+      await api.saveLaunchGroup(input);
+      await loadSnapshot(true);
+      setGroupModal(null);
+      setNotice(t("notice.groupSaved"));
+    } catch (reason) {
+      // Inline rather than a toast: the name and the order the user just built are
+      // still in the editor, and a toast over a closed dialog would ask for them again.
+      setGroupSaveError(errorMessage(reason));
+    } finally {
+      groupSaveInFlight.current = false;
+      setGroupSaving(false);
+    }
+  };
+
+  const confirmGroupDelete = async () => {
+    if (!groupToDelete || groupDeleteInFlight.current) return;
+    groupDeleteInFlight.current = true;
+    setGroupDeleteBusy(true);
+    try {
+      await api.deleteLaunchGroup(groupToDelete.id);
+      await loadSnapshot(true);
+      setGroupToDelete(null);
+      setNotice(t("notice.groupDeleted"));
+    } catch (reason) {
+      showError(t("error.operationFailed", { detail: errorMessage(reason) }));
+    } finally {
+      groupDeleteInFlight.current = false;
+      setGroupDeleteBusy(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -851,11 +981,24 @@ function AppShell() {
   }, [archiveViewerId, runHistory, snapshot, t]);
 
   const effectiveBusyProfileIds = useMemo(() => {
-    if (!restoreBusy) return busyProfileIds;
-    return new Set(
-      snapshot?.projects.flatMap((project) => project.profiles.map((profile) => profile.id)) ?? [],
-    );
-  }, [busyProfileIds, restoreBusy, snapshot]);
+    if (restoreBusy) {
+      return new Set(
+        snapshot?.projects.flatMap((project) => project.profiles.map((profile) => profile.id)) ?? [],
+      );
+    }
+    if (busyGroups.size === 0) return busyProfileIds;
+    // A group action walks its members one at a time, so every member is busy for the
+    // whole run — the reading a restore gets, narrowed to the groups actually in
+    // flight. Derived rather than written into `busyProfileIds`, so finishing a group
+    // cannot clear a profile some other action still holds.
+    const next = new Set(busyProfileIds);
+    for (const group of snapshot?.launchGroups ?? []) {
+      if (busyGroups.has(group.id)) {
+        group.profileIds.forEach((profileId) => next.add(profileId));
+      }
+    }
+    return next;
+  }, [busyGroups, busyProfileIds, restoreBusy, snapshot]);
 
   const profileActionProps = {
     busyProfileIds: effectiveBusyProfileIds,
@@ -975,6 +1118,18 @@ function AppShell() {
               snapshot={snapshot}
               restoreBusy={restoreBusy}
               onRestore={() => void restoreLastRunSet()}
+              busyGroups={busyGroups}
+              onNewGroup={() => {
+                setGroupSaveError(null);
+                setGroupModal("new");
+              }}
+              onEditGroup={(group) => {
+                setGroupSaveError(null);
+                setGroupModal(group);
+              }}
+              onDeleteGroup={setGroupToDelete}
+              onStartGroup={(group) => void runGroupAction(group, "start")}
+              onStopGroup={(group) => void runGroupAction(group, "stop")}
               runHistory={runHistory}
               runHistoryLoading={runHistoryLoading}
               runHistoryError={runHistoryError}
@@ -1061,6 +1216,30 @@ function AppShell() {
             busy={projectDeleteBusy}
             onCancel={() => setProjectToDelete(null)}
             onConfirm={() => void confirmProjectDelete()}
+          />
+        )}
+        {groupModal && snapshot && !groupToDelete && !quitOpen && !elevationOpen && !helpOpen && (
+          <LaunchGroupModal
+            group={groupModal === "new" ? null : groupModal}
+            groups={snapshot.launchGroups}
+            projects={snapshot.projects}
+            saving={groupSaving}
+            error={groupSaveError}
+            onClose={() => {
+              setGroupModal(null);
+              setGroupSaveError(null);
+            }}
+            onSave={(input) => void saveGroup(input)}
+          />
+        )}
+        {groupToDelete && !quitOpen && !elevationOpen && !helpOpen && (
+          <ConfirmModal
+            title={t("group.delete", { group: groupToDelete.name })}
+            detail={t("group.deleteWarning", { group: groupToDelete.name })}
+            confirmLabel={t("group.deleteConfirm")}
+            busy={groupDeleteBusy}
+            onCancel={() => setGroupToDelete(null)}
+            onConfirm={() => void confirmGroupDelete()}
           />
         )}
         {selectedLog && snapshot && !quitOpen && !elevationOpen && !helpOpen && (

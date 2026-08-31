@@ -734,6 +734,7 @@ mod tests {
             profile_id: "profile".into(),
             stream,
             line: line.into(),
+            reason: None,
             timestamp,
         }
     }

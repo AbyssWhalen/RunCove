@@ -1,8 +1,9 @@
 use crate::archive::{ArchiveCounters, ArchiveIndex, ArchiveReason, ArchiveRow, ArchiveStatus};
 use crate::error::{invalid, AppResult};
 use crate::models::{
-    AppSettings, AssociationSource, ExpectedPort, LaunchProfile, PortAssociation, Project,
-    ProjectInput, RestoreSet, RunLogArchiveSummary, RunSession, RunStatus,
+    AppSettings, AssociationSource, ExpectedPort, LaunchGroup, LaunchGroupInput, LaunchProfile,
+    PortAssociation, Project, ProjectInput, RestoreSet, RunLogArchiveSummary, RunSession,
+    RunStatus,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use std::collections::HashSet;
@@ -60,9 +61,9 @@ impl Storage {
             .optional()?;
         transaction.execute(
             "INSERT INTO projects (id, name, path, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?4)
+             VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT(id) DO UPDATE SET name=excluded.name, path=excluded.path, updated_at=excluded.updated_at",
-            params![project_id, input.name.trim(), canonical.to_string_lossy(), created_at.unwrap_or(now)],
+            params![project_id, input.name.trim(), canonical.to_string_lossy(), created_at.unwrap_or(now), now],
         )?;
 
         let existing_ids = profile_ids_for(&transaction, &project_id)?;
@@ -421,6 +422,116 @@ impl Storage {
         Ok(())
     }
 
+    /// Writes a launch group and returns it as stored. Creates when `input.id`
+    /// is `None`, otherwise overwrites that group and keeps its `created_at`.
+    ///
+    /// The member list is replaced wholesale rather than diffed: positions come
+    /// from the array, so a reorder changes every row anyway and a diff would
+    /// only add a way to leave a stale position behind.
+    pub fn save_launch_group(&self, input: LaunchGroupInput) -> AppResult<LaunchGroup> {
+        validate_launch_group(&input)?;
+        let name = input.name.trim();
+
+        let now = now_ms();
+        let group_id = input.id.clone().unwrap_or_else(new_id);
+        let mut connection = self.connection.lock().expect("database mutex poisoned");
+        let transaction = connection.transaction()?;
+        let created_at: Option<i64> = transaction
+            .query_row(
+                "SELECT created_at FROM launch_groups WHERE id = ?1",
+                [&group_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        // The unique index would catch this too, but only as a constraint
+        // message no user should have to read.
+        let name_taken: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM launch_groups WHERE name = ?1 COLLATE NOCASE AND id <> ?2)",
+            params![name, group_id],
+            |row| row.get(0),
+        )?;
+        if name_taken {
+            return Err(invalid("A launch group with this name already exists"));
+        }
+        for profile_id in &input.profile_ids {
+            let profile_exists: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM launch_profiles WHERE id=?1)",
+                [profile_id],
+                |row| row.get(0),
+            )?;
+            if !profile_exists {
+                return Err(invalid("Launch group member is not a known launch profile"));
+            }
+        }
+        transaction.execute(
+            "INSERT INTO launch_groups (id, name, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(id) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at",
+            params![group_id, name, created_at.unwrap_or(now), now],
+        )?;
+        transaction.execute(
+            "DELETE FROM launch_group_members WHERE group_id=?1",
+            [&group_id],
+        )?;
+        for (position, profile_id) in input.profile_ids.iter().enumerate() {
+            transaction.execute(
+                "INSERT INTO launch_group_members (group_id, position, profile_id)
+                 VALUES (?1, ?2, ?3)",
+                params![group_id, position as i64, profile_id],
+            )?;
+        }
+        transaction.commit()?;
+        drop(connection);
+        self.launch_group(&group_id)?
+            .ok_or_else(|| invalid("Saved launch group could not be loaded"))
+    }
+
+    pub fn delete_launch_group(&self, group_id: &str) -> AppResult<()> {
+        let changed = self
+            .connection
+            .lock()
+            .expect("database mutex poisoned")
+            .execute("DELETE FROM launch_groups WHERE id = ?1", [group_id])?;
+        if changed == 0 {
+            return Err(invalid("Launch group not found"));
+        }
+        Ok(())
+    }
+
+    pub fn list_launch_groups(&self) -> AppResult<Vec<LaunchGroup>> {
+        let connection = self.connection.lock().expect("database mutex poisoned");
+        let mut statement = connection.prepare(
+            "SELECT id, name, created_at, updated_at FROM launch_groups ORDER BY name COLLATE NOCASE",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })?;
+        let mut groups = Vec::new();
+        for row in rows {
+            let (id, name, created_at, updated_at) = row?;
+            groups.push(LaunchGroup {
+                profile_ids: group_member_ids(&connection, &id)?,
+                id,
+                name,
+                created_at,
+                updated_at,
+            });
+        }
+        Ok(groups)
+    }
+
+    pub fn launch_group(&self, group_id: &str) -> AppResult<Option<LaunchGroup>> {
+        Ok(self
+            .list_launch_groups()?
+            .into_iter()
+            .find(|group| group.id == group_id))
+    }
+
     pub fn settings(&self) -> AppResult<AppSettings> {
         let connection = self.connection.lock().expect("database mutex poisoned");
         let value: Option<String> = connection
@@ -765,6 +876,43 @@ fn association_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PortAssocia
     })
 }
 
+/// Reads one group's members in launch order. Positions may have holes after a
+/// cascade delete, so the order comes from `ORDER BY position` and never from
+/// treating a position as an index into the result.
+fn group_member_ids(connection: &Connection, group_id: &str) -> AppResult<Vec<String>> {
+    let mut statement = connection.prepare(
+        "SELECT profile_id FROM launch_group_members WHERE group_id=?1 ORDER BY position",
+    )?;
+    let rows = statement.query_map([group_id], |row| row.get(0))?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+/// Checks what can be judged without the database. Member existence needs the
+/// same transaction as the write, so `save_launch_group` keeps that check.
+///
+/// A group with no members is refused: its start button could never do anything.
+/// A group can still *become* empty when its last member profile is deleted, and
+/// that group is kept and shown rather than silently removed.
+fn validate_launch_group(input: &LaunchGroupInput) -> AppResult<()> {
+    if input.name.trim().is_empty() {
+        return Err(invalid("Launch group name cannot be empty"));
+    }
+    if input.profile_ids.is_empty() {
+        return Err(invalid(
+            "Launch group must have at least one launch profile",
+        ));
+    }
+    let mut seen = HashSet::new();
+    for profile_id in &input.profile_ids {
+        if !seen.insert(profile_id.as_str()) {
+            return Err(invalid(
+                "Launch group cannot list the same launch profile twice",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_project(input: &ProjectInput) -> AppResult<()> {
     if input.profiles.is_empty() {
         return Err(invalid("Project must have at least one launch profile"));
@@ -816,7 +964,7 @@ fn normalize_protocol(protocol: &str) -> AppResult<String> {
 }
 
 /// The schema version this build writes and is willing to open.
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 fn migrate(connection: &mut Connection) -> AppResult<()> {
     let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
@@ -870,6 +1018,9 @@ fn migrate(connection: &mut Connection) -> AppResult<()> {
     if version <= 1 {
         upgrade_to_version_2(connection)?;
     }
+    if version <= 2 {
+        upgrade_to_version_3(connection)?;
+    }
     Ok(())
 }
 
@@ -915,6 +1066,48 @@ fn upgrade_to_version_2(connection: &mut Connection) -> AppResult<()> {
          CREATE INDEX idx_run_log_archives_status_ended
             ON run_log_archives (status, ended_at);
          PRAGMA user_version=2;",
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
+/// Adds the launch group tables. One transaction, `user_version` last: if any
+/// statement fails the whole upgrade rolls back and the database stays at
+/// version 2, openable by this build and by v0.3.0.
+///
+/// The other direction is not symmetric. Once this commits, the database is at
+/// version 3 and v0.3.0 refuses to open it, because that build rejects any
+/// version above 2. There is no downgrade path and this is not a rollback.
+///
+/// `ON DELETE CASCADE` to `launch_profiles` is why groups are tables rather than
+/// a field in the settings JSON: deleting a profile removes it from every group
+/// that listed it, so no read has to filter out references to profiles that no
+/// longer exist. Positions may then have holes, which is harmless because every
+/// read is `ORDER BY position` and never treats a position as an index.
+///
+/// `COLLATE NOCASE` on the unique name is deliberate: two groups called `Web`
+/// and `web` are a mistake, not a pair the user meant to keep apart.
+///
+/// `CREATE TABLE` deliberately omits `IF NOT EXISTS`, for the same reason as
+/// version 2: a pre-existing object with this name is a database this build does
+/// not understand, and adopting it silently would be worse than failing.
+fn upgrade_to_version_3(connection: &mut Connection) -> AppResult<()> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "CREATE TABLE launch_groups (
+            id         TEXT PRIMARY KEY,
+            name       TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+         );
+         CREATE TABLE launch_group_members (
+            group_id   TEXT NOT NULL REFERENCES launch_groups(id) ON DELETE CASCADE,
+            position   INTEGER NOT NULL,
+            profile_id TEXT NOT NULL REFERENCES launch_profiles(id) ON DELETE CASCADE,
+            PRIMARY KEY (group_id, position),
+            UNIQUE (group_id, profile_id)
+         );
+         PRAGMA user_version=3;",
     )?;
     transaction.commit()?;
     Ok(())
@@ -968,7 +1161,7 @@ mod tests {
     /// The schema version this build must produce. Deliberately a literal rather
     /// than a production constant, so bumping the constant cannot make the
     /// migration tests pass on its own.
-    const CURRENT_SCHEMA_VERSION: i64 = 2;
+    const CURRENT_SCHEMA_VERSION: i64 = 3;
 
     fn read_schema_version(connection: &Connection) -> i64 {
         connection
@@ -1055,6 +1248,21 @@ mod tests {
         let project = storage.save_project(sample_project(temp.path())).unwrap();
         assert_eq!(project.profiles[0].expected_ports[0].port, 5173);
         assert_eq!(project.profiles[0].expected_ports[0].protocol, "tcp");
+
+        // An edit moves `updated_at` forward and leaves `created_at` where it was.
+        // Writing both columns from the same parameter looks harmless and silently
+        // rewinds `updated_at` to the creation time on every save.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let edited = storage
+            .save_project(ProjectInput {
+                id: Some(project.id.clone()),
+                name: "Renamed".into(),
+                ..sample_project(temp.path())
+            })
+            .unwrap();
+        assert_eq!(edited.created_at, project.created_at);
+        assert!(edited.updated_at > project.updated_at);
+
         storage.delete_project(&project.id).unwrap();
         assert!(storage.list_projects().unwrap().is_empty());
     }
@@ -1338,6 +1546,288 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // Launch groups.
+    // -----------------------------------------------------------------------
+
+    /// A project whose three profiles stand in for the `db -> api -> web` order a
+    /// launch group exists to express.
+    fn three_profile_project(path: &Path) -> ProjectInput {
+        let cwd = path.to_string_lossy().into_owned();
+        ProjectInput {
+            id: None,
+            name: "Stack".into(),
+            path: cwd.clone(),
+            profiles: ["db", "api", "web"]
+                .into_iter()
+                .map(|name| LaunchProfileInput {
+                    id: None,
+                    name: name.into(),
+                    program: "npm".into(),
+                    args: vec!["run".into(), name.into()],
+                    cwd: cwd.clone(),
+                    expected_ports: Vec::new(),
+                })
+                .collect(),
+        }
+    }
+
+    fn profile_input(profile: &LaunchProfile) -> LaunchProfileInput {
+        LaunchProfileInput {
+            id: Some(profile.id.clone()),
+            name: profile.name.clone(),
+            program: profile.program.clone(),
+            args: profile.args.clone(),
+            cwd: profile.cwd.clone(),
+            expected_ports: Vec::new(),
+        }
+    }
+
+    fn profile_ids_of(project: &Project) -> Vec<String> {
+        project
+            .profiles
+            .iter()
+            .map(|profile| profile.id.clone())
+            .collect()
+    }
+
+    #[test]
+    fn a_launch_group_round_trips_in_its_stored_order() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = Storage::in_memory().unwrap();
+        let project = storage
+            .save_project(three_profile_project(temp.path()))
+            .unwrap();
+        let ids = profile_ids_of(&project);
+
+        let saved = storage
+            .save_launch_group(LaunchGroupInput {
+                id: None,
+                name: "  Full Stack  ".into(),
+                profile_ids: ids.clone(),
+            })
+            .unwrap();
+        assert_eq!(saved.name, "Full Stack");
+        assert_eq!(saved.profile_ids, ids);
+
+        // Reordering is the point of the feature, and writing a position from a
+        // stale index is how it goes wrong. The sleep makes the timestamp
+        // assertions below mean something rather than pass within one tick.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let reordered = vec![ids[2].clone(), ids[0].clone(), ids[1].clone()];
+        let updated = storage
+            .save_launch_group(LaunchGroupInput {
+                id: Some(saved.id.clone()),
+                name: "Full Stack".into(),
+                profile_ids: reordered.clone(),
+            })
+            .unwrap();
+
+        assert_eq!(updated.id, saved.id);
+        assert_eq!(updated.profile_ids, reordered);
+        assert_eq!(updated.created_at, saved.created_at);
+        assert!(updated.updated_at > saved.updated_at);
+        assert_eq!(storage.launch_group(&saved.id).unwrap(), Some(updated));
+        assert_eq!(storage.list_launch_groups().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn deleting_a_profile_removes_it_from_every_launch_group() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = Storage::in_memory().unwrap();
+        let project = storage
+            .save_project(three_profile_project(temp.path()))
+            .unwrap();
+        let ids = profile_ids_of(&project);
+        let whole = storage
+            .save_launch_group(LaunchGroupInput {
+                id: None,
+                name: "Whole stack".into(),
+                profile_ids: ids.clone(),
+            })
+            .unwrap();
+        let solo = storage
+            .save_launch_group(LaunchGroupInput {
+                id: None,
+                name: "Api only".into(),
+                profile_ids: vec![ids[1].clone()],
+            })
+            .unwrap();
+
+        // Saving the project without its middle profile deletes that profile,
+        // which is the only way a group loses a member.
+        storage
+            .save_project(ProjectInput {
+                id: Some(project.id.clone()),
+                name: project.name.clone(),
+                path: project.path.clone(),
+                profiles: project
+                    .profiles
+                    .iter()
+                    .filter(|profile| profile.id != ids[1])
+                    .map(profile_input)
+                    .collect(),
+            })
+            .unwrap();
+
+        assert_eq!(
+            storage
+                .launch_group(&whole.id)
+                .unwrap()
+                .unwrap()
+                .profile_ids,
+            vec![ids[0].clone(), ids[2].clone()],
+            "the surviving members must keep their order"
+        );
+        // A group whose every member is gone is kept and reported empty rather
+        // than deleted behind the user's back.
+        assert!(storage
+            .launch_group(&solo.id)
+            .unwrap()
+            .unwrap()
+            .profile_ids
+            .is_empty());
+    }
+
+    #[test]
+    fn launch_group_validation_rejects_input_no_group_could_mean() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = Storage::in_memory().unwrap();
+        let project = storage
+            .save_project(three_profile_project(temp.path()))
+            .unwrap();
+        let first = project.profiles[0].id.clone();
+
+        for (case, name, profile_ids) in [
+            ("an empty name", "", vec![first.clone()]),
+            ("a whitespace-only name", "   ", vec![first.clone()]),
+            ("no members", "Nothing to start", Vec::new()),
+            (
+                "the same member twice",
+                "Doubled",
+                vec![first.clone(), first.clone()],
+            ),
+            (
+                "a profile that does not exist",
+                "Ghost",
+                vec!["prof-missing".to_string()],
+            ),
+        ] {
+            assert!(
+                storage
+                    .save_launch_group(LaunchGroupInput {
+                        id: None,
+                        name: name.into(),
+                        profile_ids,
+                    })
+                    .is_err(),
+                "{case} was accepted"
+            );
+        }
+        // A rejected save must leave nothing behind, including the group row a
+        // member check reached only after writing it.
+        assert!(storage.list_launch_groups().unwrap().is_empty());
+    }
+
+    #[test]
+    fn launch_group_names_are_unique_ignoring_case() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = Storage::in_memory().unwrap();
+        let project = storage
+            .save_project(three_profile_project(temp.path()))
+            .unwrap();
+        let ids = profile_ids_of(&project);
+        let group = storage
+            .save_launch_group(LaunchGroupInput {
+                id: None,
+                name: "Full Stack".into(),
+                profile_ids: vec![ids[0].clone()],
+            })
+            .unwrap();
+
+        let clash = storage
+            .save_launch_group(LaunchGroupInput {
+                id: None,
+                name: "full stack".into(),
+                profile_ids: vec![ids[1].clone()],
+            })
+            .unwrap_err();
+        assert!(
+            clash.to_string().contains("already exists"),
+            "unexpected error: {clash}"
+        );
+
+        // A group is not a name clash with itself, so an edit that keeps the
+        // name must still save.
+        storage
+            .save_launch_group(LaunchGroupInput {
+                id: Some(group.id.clone()),
+                name: "FULL STACK".into(),
+                profile_ids: vec![ids[2].clone()],
+            })
+            .unwrap();
+        let groups = storage.list_launch_groups().unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].name, "FULL STACK");
+    }
+
+    #[test]
+    fn deleting_a_launch_group_keeps_its_profiles_and_refuses_a_second_delete() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = Storage::in_memory().unwrap();
+        let project = storage
+            .save_project(three_profile_project(temp.path()))
+            .unwrap();
+        let ids = profile_ids_of(&project);
+        let beta = storage
+            .save_launch_group(LaunchGroupInput {
+                id: None,
+                name: "beta".into(),
+                profile_ids: vec![ids[0].clone()],
+            })
+            .unwrap();
+        storage
+            .save_launch_group(LaunchGroupInput {
+                id: None,
+                name: "Alpha".into(),
+                profile_ids: vec![ids[1].clone()],
+            })
+            .unwrap();
+        assert_eq!(
+            storage
+                .list_launch_groups()
+                .unwrap()
+                .iter()
+                .map(|group| group.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Alpha", "beta"],
+            "groups are listed by name, case-insensitively"
+        );
+
+        storage.delete_launch_group(&beta.id).unwrap();
+
+        assert!(storage.launch_group(&beta.id).unwrap().is_none());
+        let orphans: i64 = storage
+            .connection
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM launch_group_members WHERE group_id=?1",
+                [&beta.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(orphans, 0);
+        assert!(
+            storage.delete_launch_group(&beta.id).is_err(),
+            "deleting a group that is already gone must be reported"
+        );
+        // The cascade runs one way only: a group holds profiles, it does not own
+        // them.
+        assert_eq!(storage.list_projects().unwrap()[0].profiles.len(), 3);
+        assert_eq!(storage.list_launch_groups().unwrap().len(), 1);
+    }
+
+    // -----------------------------------------------------------------------
     // Schema version 1 -> 2 migration.
     //
     // `V1_SCHEMA` is a pinned copy of the version 1 schema as shipped in
@@ -1439,6 +1929,25 @@ mod tests {
         );
         CREATE INDEX idx_run_log_archives_status_ended
           ON run_log_archives (status, ended_at);
+"#;
+
+    /// The version 3 addition, duplicated from the plan for the same reason as
+    /// `V2_ADDITION`: it pins the target shape independently of the production
+    /// migration, so drift between the two fails a test.
+    const V3_ADDITION: &str = r#"
+        CREATE TABLE launch_groups (
+          id         TEXT PRIMARY KEY,
+          name       TEXT NOT NULL COLLATE NOCASE UNIQUE,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE launch_group_members (
+          group_id   TEXT NOT NULL REFERENCES launch_groups(id) ON DELETE CASCADE,
+          position   INTEGER NOT NULL,
+          profile_id TEXT NOT NULL REFERENCES launch_profiles(id) ON DELETE CASCADE,
+          PRIMARY KEY (group_id, position),
+          UNIQUE (group_id, profile_id)
+        );
 "#;
 
     fn open_raw(path: &Path) -> Connection {
@@ -1622,7 +2131,7 @@ mod tests {
         assert_eq!(summary, (1, 12));
     }
     #[test]
-    fn a_version_2_database_opens_and_only_a_higher_version_is_rejected() {
+    fn a_version_3_database_opens_and_only_a_higher_version_is_rejected() {
         let temp = tempfile::tempdir().unwrap();
 
         let current = temp.path().join("current.sqlite3");
@@ -1630,7 +2139,8 @@ mod tests {
         {
             let connection = open_raw(&current);
             connection.execute_batch(V2_ADDITION).unwrap();
-            connection.pragma_update(None, "user_version", 2).unwrap();
+            connection.execute_batch(V3_ADDITION).unwrap();
+            connection.pragma_update(None, "user_version", 3).unwrap();
         }
         let storage = Storage::open(&current).unwrap();
         assert_eq!(schema_version_of(&storage), CURRENT_SCHEMA_VERSION);
@@ -1641,10 +2151,11 @@ mod tests {
         {
             let connection = open_raw(&future);
             connection.execute_batch(V2_ADDITION).unwrap();
-            connection.pragma_update(None, "user_version", 3).unwrap();
+            connection.execute_batch(V3_ADDITION).unwrap();
+            connection.pragma_update(None, "user_version", 4).unwrap();
         }
         let error = match Storage::open(&future) {
-            Ok(_) => panic!("a database newer than version 2 must be rejected"),
+            Ok(_) => panic!("a database newer than version 3 must be rejected"),
             Err(error) => error,
         };
         assert!(
@@ -1652,7 +2163,7 @@ mod tests {
             "unexpected error: {error}"
         );
         // Rejecting must be read-only: a newer database is not downgraded.
-        assert_eq!(read_schema_version(&open_raw(&future)), 3);
+        assert_eq!(read_schema_version(&open_raw(&future)), 4);
     }
     #[test]
     fn a_failed_migration_leaves_the_version_1_database_intact() {
@@ -1697,6 +2208,103 @@ mod tests {
 
         // With the conflict gone the upgrade proceeds, proving the failed
         // attempt left the file usable rather than wedged.
+        let storage = Storage::open(&path).unwrap();
+        assert_eq!(schema_version_of(&storage), CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn a_populated_version_2_database_upgrades_to_version_3() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("runcove.sqlite3");
+        {
+            let connection = create_pinned_version_2_database(&path);
+            insert_archive_row(
+                &connection,
+                "('sess-exited','sess-exited.jsonl','complete',NULL,12,480,0,0,10000,11000)",
+            )
+            .unwrap();
+        }
+
+        let storage = Storage::open(&path).unwrap();
+
+        assert_eq!(schema_version_of(&storage), CURRENT_SCHEMA_VERSION);
+        {
+            let connection = storage.connection.lock().unwrap();
+            assert!(object_exists(&connection, "table", "launch_groups"));
+            assert!(object_exists(&connection, "table", "launch_group_members"));
+            assert_eq!(
+                column_names(&connection, "launch_groups").join(","),
+                "id,name,created_at,updated_at"
+            );
+            assert_eq!(
+                column_names(&connection, "launch_group_members").join(","),
+                "group_id,position,profile_id"
+            );
+        }
+        // The upgrade adds two tables. It must not invent groups out of the
+        // restore set or anything else already in the database.
+        assert!(storage.list_launch_groups().unwrap().is_empty());
+
+        // Everything version 2 held is still there and still readable.
+        assert_eq!(
+            storage.restore_set().unwrap().profile_ids,
+            ["prof-2", "prof-1"]
+        );
+        assert_eq!(storage.list_projects().unwrap()[0].name, "Legacy Web App");
+        assert_eq!(storage.settings().unwrap().log_capacity, 1234);
+        let sessions = storage.list_sessions(10).unwrap();
+        let exited = sessions
+            .iter()
+            .find(|session| session.id == "sess-exited")
+            .unwrap();
+        assert_eq!(
+            exited
+                .archive
+                .as_ref()
+                .map(|archive| (archive.status.as_str(), archive.line_count)),
+            Some(("complete", 12))
+        );
+    }
+
+    #[test]
+    fn a_failed_version_3_migration_leaves_the_version_2_database_intact() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("runcove.sqlite3");
+        drop(create_pinned_version_2_database(&path));
+        // Occupying the name the upgrade must create is the only way to force a
+        // mid-migration failure without adding a test-only seam to `migrate`.
+        {
+            let connection = open_raw(&path);
+            connection
+                .execute_batch("CREATE TABLE launch_group_members (group_id TEXT, junk TEXT);")
+                .unwrap();
+        }
+
+        assert!(
+            Storage::open(&path).is_err(),
+            "an upgrade that cannot create its table must fail, not half-apply"
+        );
+
+        let connection = open_raw(&path);
+        assert_eq!(read_schema_version(&connection), 2);
+        // `launch_groups` is created first in the same batch, so the rollback is
+        // what has to take it away again.
+        assert!(!object_exists(&connection, "table", "launch_groups"));
+        assert_eq!(
+            column_names(&connection, "launch_group_members").join(","),
+            "group_id,junk"
+        );
+        let sessions: i64 = connection
+            .query_row("SELECT COUNT(*) FROM run_sessions", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(sessions, 3);
+        connection
+            .execute_batch("DROP TABLE launch_group_members;")
+            .unwrap();
+        drop(connection);
+
+        // With the conflict gone the upgrade proceeds, proving the failed attempt
+        // left the file usable rather than wedged at version 2.
         let storage = Storage::open(&path).unwrap();
         assert_eq!(schema_version_of(&storage), CURRENT_SCHEMA_VERSION);
     }

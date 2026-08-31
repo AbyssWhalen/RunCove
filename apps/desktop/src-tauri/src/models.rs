@@ -110,12 +110,68 @@ pub struct RelatedPort {
     pub protocol: String,
 }
 
+/// Why a run's status changed, in a form the frontend can translate.
+///
+/// The backend cannot know which language the window is showing, so a lifecycle
+/// change carries a value rather than a finished sentence. [`Self::describe`] is
+/// the English form: it is what the run log and the archive keep, and what a
+/// frontend that does not recognize a variant falls back to. The localized
+/// wording lives in the frontend's message catalog, not here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum RunStatusReason {
+    /// The user asked RunCove to stop the profile.
+    StopRequested,
+    /// The process ended after the user's stop request.
+    UserStop,
+    /// The process ended because RunCove was shutting down.
+    Shutdown,
+    /// RunCove abandoned a start that never became ready.
+    StartupNotReady,
+    /// The process ended with a success status.
+    ExitedNormally,
+    /// The process ended with a failure status. `code` is absent only where the
+    /// platform reports no exit code, which Windows never does.
+    ExitedUnexpectedly { code: Option<i32> },
+    /// RunCove could not wait for the process, so its final state is unknown.
+    WaitFailed { detail: String },
+    /// A start was requested for a profile RunCove is already running.
+    AlreadyRunning,
+}
+
+impl RunStatusReason {
+    /// This reason as one English sentence.
+    ///
+    /// This is the run log's wording, not the interface's: a system log line is
+    /// archived to a file that outlives the window's language, so it stays a
+    /// single stable form rather than whatever locale happened to be active.
+    pub fn describe(&self) -> String {
+        match self {
+            Self::StopRequested => "Stop requested".into(),
+            Self::UserStop => "Stopped by user".into(),
+            Self::Shutdown => "Stopped during application shutdown".into(),
+            Self::StartupNotReady => "Stopped because startup did not become ready".into(),
+            Self::ExitedNormally => "Process exited normally".into(),
+            Self::ExitedUnexpectedly { code: Some(code) } => {
+                format!("Process exited unexpectedly with exit code {code}")
+            }
+            Self::ExitedUnexpectedly { code: None } => "Process exited unexpectedly".into(),
+            Self::WaitFailed { detail } => format!("Could not wait for process: {detail}"),
+            Self::AlreadyRunning => "Profile is already running".into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunStatusEvent {
     pub profile_id: String,
     pub status: RunStatus,
     pub pid: Option<u32>,
+    /// Why the status changed. `None` where the only text RunCove has is a
+    /// backend error string, which stays in `message`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<RunStatusReason>,
     pub message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub related_port: Option<RelatedPort>,
@@ -130,6 +186,11 @@ pub struct RunLogEvent {
     pub profile_id: String,
     pub stream: LogStream,
     pub line: String,
+    /// Set only on a `system` line RunCove wrote about the run's own lifecycle, so
+    /// the log drawer can show it in the user's language. The archive stores
+    /// `line` and not this, which is why `line` stays the English sentence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<RunStatusReason>,
     pub timestamp: i64,
 }
 
@@ -236,6 +297,32 @@ pub struct RunSession {
 pub struct RestoreSet {
     pub profile_ids: Vec<String>,
     pub saved_at: Option<i64>,
+}
+
+/// A named, ordered set of launch profiles the user starts and stops as a unit.
+///
+/// `profile_ids` is the launch order, expressed as array position exactly like
+/// `RestoreSet::profile_ids`. Members may span projects, and the list can be
+/// empty for a group whose every member profile was deleted — deleting a profile
+/// removes it from each group it belonged to rather than deleting the group.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchGroup {
+    pub id: String,
+    pub name: String,
+    pub profile_ids: Vec<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// `id` is `None` for a new group and `Some` when editing an existing one, the
+/// same split `ProjectInput` uses.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchGroupInput {
+    pub id: Option<String>,
+    pub name: String,
+    pub profile_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -393,6 +480,7 @@ pub struct DashboardSnapshot {
     /// What the archive can do right now, which `settings.archive_run_logs` alone
     /// cannot say: the stored setting can be on while this run's archive is broken.
     pub run_log_archive: RunLogArchiveState,
+    pub launch_groups: Vec<LaunchGroup>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -403,6 +491,39 @@ pub struct RestoreResult {
     pub error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub related_port: Option<RelatedPort>,
+}
+
+/// The outcome of starting a whole launch group. Shaped like `RestoreResult`
+/// because both walk an ordered list and stop at the first failure, but kept
+/// separate: `RestoreResult` is the published return of the restore command, and
+/// this one names the group so the caller can tell which section to update.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchGroupStartResult {
+    pub group_id: String,
+    pub started_profile_ids: Vec<String>,
+    pub failed_profile_id: Option<String>,
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub related_port: Option<RelatedPort>,
+}
+
+/// The outcome of stopping a whole launch group. There is no single
+/// `failed_profile_id` because stopping does not give up at the first failure:
+/// every member is attempted and each failure is reported.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchGroupStopResult {
+    pub group_id: String,
+    pub stopped_profile_ids: Vec<String>,
+    pub failures: Vec<LaunchGroupStopFailure>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchGroupStopFailure {
+    pub profile_id: String,
+    pub error: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -461,6 +582,7 @@ mod tests {
             profile_id: "profile".into(),
             status: RunStatus::Conflict,
             pid: None,
+            reason: None,
             message: Some("Expected port 5173 is already occupied".into()),
             related_port: Some(RelatedPort {
                 port: 5173,
@@ -497,6 +619,72 @@ mod tests {
 
         assert_eq!(event["sessionId"], "session");
         assert!(event.get("session_id").is_none());
+    }
+
+    /// The frontend maps `reason.kind` to a localized sentence and falls back to
+    /// the English `message` for a kind it does not know. A rename on this side is
+    /// therefore silent: the interface keeps working and quietly shows English
+    /// again, which is the defect this reason exists to fix. Hence the wire shape
+    /// is pinned here rather than left to the frontend's type declaration.
+    #[test]
+    fn a_run_status_reason_travels_as_a_kebab_case_kind() {
+        let plain = serde_json::to_value(RunStatusReason::UserStop).unwrap();
+        assert_eq!(plain["kind"], "user-stop");
+
+        let exited =
+            serde_json::to_value(RunStatusReason::ExitedUnexpectedly { code: Some(7) }).unwrap();
+        assert_eq!(exited["kind"], "exited-unexpectedly");
+        assert_eq!(exited["code"], 7);
+
+        let signalled =
+            serde_json::to_value(RunStatusReason::ExitedUnexpectedly { code: None }).unwrap();
+        assert_eq!(signalled["code"], serde_json::Value::Null);
+
+        let failed = serde_json::to_value(RunStatusReason::WaitFailed {
+            detail: "handle closed".into(),
+        })
+        .unwrap();
+        assert_eq!(failed["kind"], "wait-failed");
+        assert_eq!(failed["detail"], "handle closed");
+
+        // Every variant keeps an English sentence for the run log and for that
+        // fallback, so none may render as an empty line.
+        for reason in [
+            RunStatusReason::StopRequested,
+            RunStatusReason::UserStop,
+            RunStatusReason::Shutdown,
+            RunStatusReason::StartupNotReady,
+            RunStatusReason::ExitedNormally,
+            RunStatusReason::ExitedUnexpectedly { code: Some(1) },
+            RunStatusReason::ExitedUnexpectedly { code: None },
+            RunStatusReason::WaitFailed {
+                detail: "handle closed".into(),
+            },
+            RunStatusReason::AlreadyRunning,
+        ] {
+            assert!(!reason.describe().is_empty(), "{reason:?} has no sentence");
+        }
+    }
+
+    /// An event that carries no reason must not grow a `reason` key, because the
+    /// frontend reads its presence to decide between the localized sentence and the
+    /// backend's own text.
+    #[test]
+    fn an_event_without_a_reason_omits_the_field() {
+        let event = serde_json::to_value(RunStatusEvent {
+            profile_id: "profile".into(),
+            status: RunStatus::Unknown,
+            pid: None,
+            reason: None,
+            message: Some("Could not update the restore set".into()),
+            related_port: None,
+            unexpected: true,
+            timestamp: 1,
+        })
+        .unwrap();
+
+        assert!(event.get("reason").is_none());
+        assert_eq!(event["message"], "Could not update the restore set");
     }
 
     #[test]

@@ -609,6 +609,71 @@ p {
   font-weight: 700;
 }
 
+/* A member no project claims. Dashed rather than hidden, because the row is showing a
+   raw profile id and the edge is what says so at a glance. */
+.sequence-item--missing {
+  border-style: dashed;
+  border-color: #dfaaa4;
+  color: #8f3333;
+  background: #fdf5f4;
+}
+
+.group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.group-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.group-card__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.group-card__identity {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.group-card__identity h3 {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-card__warning {
+  margin: 2px 0 0;
+  color: #8f3333;
+  font-size: 11px;
+}
+
+.group-card__actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 5px;
+}
+
 .data-section {
   min-width: 0;
 }
@@ -934,6 +999,18 @@ td .row-actions {
 }
 
 .status-badge--starting .status-dot {
+  background: #bf7d1c;
+}
+
+/* A launch group with some but not all members up. It shares the warning palette with
+   `--starting` because both mean "not settled yet", and a group is never `starting`. */
+.status-badge--partial {
+  border-color: #ead39f;
+  color: #815618;
+  background: var(--warning-soft);
+}
+
+.status-badge--partial .status-dot {
   background: #bf7d1c;
 }
 
@@ -1457,6 +1534,149 @@ td .row-actions {
 
 .project-modal {
   width: min(850px, calc(100vw - 48px));
+}
+
+.group-modal {
+  width: min(760px, calc(100vw - 48px));
+}
+
+.group-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+}
+
+/* Two columns, because the picker and the order are one task: tick a profile on the
+   left and watch where it lands in the sequence on the right. */
+.group-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.group-picker__column {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.group-picker__column h3 {
+  color: #515852;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.group-picker__hint {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.group-picker__scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  max-height: 250px;
+  padding: 9px 11px;
+  overflow-y: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: #ffffff;
+  scrollbar-width: thin;
+}
+
+.group-picker__project {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  border: 0;
+}
+
+.group-picker__project legend {
+  padding: 0 0 3px;
+  color: #515852;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.group-picker__option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 24px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.group-picker__option input {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent-dark);
+}
+
+.group-picker__option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-order {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 250px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  counter-reset: group-order;
+  scrollbar-width: thin;
+}
+
+.group-order li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  min-width: 0;
+  min-height: 34px;
+  padding: 3px 4px 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #fafbf9;
+  counter-increment: group-order;
+}
+
+.group-order li > span {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-order li > span::before {
+  margin-right: 5px;
+  color: var(--accent-dark);
+  content: counter(group-order) ".";
+  font-weight: 700;
+}
+
+/* Used by every modal's inline validation, not just the group editor. The second
+   selector beats `.field > span`, which would otherwise render the message as one more
+   uppercase field label. */
+.field-error,
+.field > .field-error {
+  color: #8f3333;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: none;
 }
 
 .modal-header,
@@ -2543,9 +2763,25 @@ svg.is-spinning {
   }
 
   .modal,
-  .project-modal {
+  .project-modal,
+  .group-modal {
     width: calc(100vw - 24px);
     max-height: calc(100vh - 24px);
+  }
+
+  /* The two picker columns and the card's action row are the first things to run out
+     of width here, so both fall back to stacking rather than scrolling sideways. */
+  .group-picker {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .group-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .group-card__actions {
+    flex-wrap: wrap;
   }
 }
 

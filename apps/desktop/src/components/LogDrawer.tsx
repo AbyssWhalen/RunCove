@@ -2,6 +2,7 @@ import { ArrowDownToLine, Check, Copy, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useI18n } from "../i18n";
+import { describeRunStatusReason } from "../run-status";
 import type {
   LaunchProfile,
   Project,
@@ -126,8 +127,13 @@ export function LogDrawer({
     if (autoScroll) endRef.current?.scrollIntoView({ block: "end" });
   }, [autoScroll, visibleLogs]);
 
+  // A lifecycle line is shown in the window's language; everything else is the
+  // child process's own output and is never rewritten. Copying reuses this so the
+  // clipboard matches the screen.
+  const lineText = (entry: RunLogEvent) => describeRunStatusReason(entry.reason, t) ?? entry.line;
+
   const copyLogs = async () => {
-    const text = visibleLogs.map((entry) => `[${entry.stream}] ${entry.line}`).join("\n");
+    const text = visibleLogs.map((entry) => `[${entry.stream}] ${lineText(entry)}`).join("\n");
     setError(null);
     if (!navigator.clipboard) {
       setError(t("logs.copyUnavailable"));
@@ -269,7 +275,7 @@ export function LogDrawer({
               <span className="log-stream">
                 {entry.stream === "system" ? t("logs.system") : entry.stream}
               </span>
-              <pre>{entry.line}</pre>
+              <pre>{lineText(entry)}</pre>
             </div>
           ))}
           <div ref={endRef} />

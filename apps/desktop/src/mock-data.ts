@@ -2,6 +2,10 @@ import type {
   DashboardSnapshot,
   DiscoveredProject,
   ExternalProcessRequest,
+  LaunchGroup,
+  LaunchGroupInput,
+  LaunchGroupStartResult,
+  LaunchGroupStopResult,
   Project,
   ProjectInput,
   RestoreResult,
@@ -44,6 +48,17 @@ const initialSnapshot: DashboardSnapshot = {
     profileIds: ["profile-studio-web", "profile-docs"],
     savedAt: Date.parse("2026-08-06T16:41:12.000Z"),
   },
+  // Seeded half-running on purpose: Web is already up and API is not, so the preview
+  // opens on the "partly running" badge rather than on either extreme.
+  launchGroups: [
+    {
+      id: "group-studio",
+      name: "Abyss Studio stack",
+      profileIds: ["profile-studio-api", "profile-studio-web"],
+      createdAt: Date.parse("2026-07-30T09:00:00.000Z"),
+      updatedAt: Date.parse("2026-08-06T16:41:12.000Z"),
+    },
+  ],
   projects: [
     {
       id: "project-studio",
@@ -447,6 +462,31 @@ export function createMockApi(): MockRunCoveApi {
     logHandlers.forEach((handler) => handler(clone(event)));
   };
 
+  /**
+   * Drop deleted profiles from the restore set and from every launch group, the way
+   * the database's `ON DELETE CASCADE` does. A group whose last member goes is kept
+   * and reported empty rather than deleted.
+   */
+  const forgetProfiles = (removed: Set<string>): void => {
+    if (removed.size === 0) return;
+    snapshot.restoreSet.profileIds = snapshot.restoreSet.profileIds.filter(
+      (profileId) => !removed.has(profileId),
+    );
+    snapshot.launchGroups = snapshot.launchGroups.map((group) => ({
+      ...group,
+      profileIds: group.profileIds.filter((profileId) => !removed.has(profileId)),
+    }));
+  };
+
+  const groupToRun = (groupId: string): LaunchGroup => {
+    const group = snapshot.launchGroups.find((item) => item.id === groupId);
+    if (!group) throw new Error("Launch group not found");
+    if (group.profileIds.length === 0) {
+      throw new Error("This launch group has no launch profiles");
+    }
+    return group;
+  };
+
   return {
     reset() {
       snapshot = clone(initialSnapshot);
@@ -528,6 +568,14 @@ export function createMockApi(): MockRunCoveApi {
       snapshot.projects = existing
         ? snapshot.projects.map((item) => (item.id === projectId ? project : item))
         : [...snapshot.projects, project];
+      const keptProfileIds = new Set(project.profiles.map((profile) => profile.id));
+      forgetProfiles(
+        new Set(
+          existing?.profiles
+            .map((profile) => profile.id)
+            .filter((profileId) => !keptProfileIds.has(profileId)) ?? [],
+        ),
+      );
       return clone(project);
     },
     async deleteProject(projectId) {
@@ -537,9 +585,7 @@ export function createMockApi(): MockRunCoveApi {
           ?.profiles.map((profile) => profile.id) ?? [],
       );
       snapshot.projects = snapshot.projects.filter((project) => project.id !== projectId);
-      snapshot.restoreSet.profileIds = snapshot.restoreSet.profileIds.filter(
-        (profileId) => !removedProfileIds.has(profileId),
-      );
+      forgetProfiles(removedProfileIds);
     },
     async startProfile(profileId) {
       appendLog(profileId, "Start requested from browser preview");
@@ -559,6 +605,63 @@ export function createMockApi(): MockRunCoveApi {
         emitStatus(profileId, "running");
         appendLog(profileId, "Restored from last run set");
         result.startedProfileIds.push(profileId);
+      }
+      return result;
+    },
+    async saveLaunchGroup(input: LaunchGroupInput) {
+      const name = input.name.trim();
+      if (!name) throw new Error("Launch group name cannot be empty");
+      if (input.profileIds.length === 0) {
+        throw new Error("Launch group must have at least one launch profile");
+      }
+      if (new Set(input.profileIds).size !== input.profileIds.length) {
+        throw new Error("Launch group cannot list the same launch profile twice");
+      }
+      const clash = snapshot.launchGroups.find(
+        (group) => group.id !== input.id && group.name.toLowerCase() === name.toLowerCase(),
+      );
+      if (clash) throw new Error("A launch group with this name already exists");
+      const existing = input.id
+        ? snapshot.launchGroups.find((group) => group.id === input.id)
+        : undefined;
+      const group: LaunchGroup = {
+        id: existing?.id ?? nextId("group"),
+        name,
+        profileIds: [...input.profileIds],
+        createdAt: existing?.createdAt ?? fixedNow,
+        updatedAt: fixedNow,
+      };
+      snapshot.launchGroups = existing
+        ? snapshot.launchGroups.map((item) => (item.id === group.id ? group : item))
+        : [...snapshot.launchGroups, group];
+      snapshot.launchGroups.sort((left, right) => left.name.localeCompare(right.name));
+      return clone(group);
+    },
+    async deleteLaunchGroup(groupId) {
+      if (!snapshot.launchGroups.some((group) => group.id === groupId)) {
+        throw new Error("Launch group not found");
+      }
+      snapshot.launchGroups = snapshot.launchGroups.filter((group) => group.id !== groupId);
+    },
+    async startLaunchGroup(groupId) {
+      const group = groupToRun(groupId);
+      const result: LaunchGroupStartResult = { groupId, startedProfileIds: [] };
+      for (const profileId of group.profileIds) {
+        emitStatus(profileId, "running");
+        appendLog(profileId, `Started as part of ${group.name}`);
+        result.startedProfileIds.push(profileId);
+      }
+      return result;
+    },
+    async stopLaunchGroup(groupId) {
+      const group = groupToRun(groupId);
+      const result: LaunchGroupStopResult = { groupId, stoppedProfileIds: [], failures: [] };
+      // Backwards, the way the real command walks it: whatever depends on a member
+      // goes down before the member itself does.
+      for (const profileId of [...group.profileIds].reverse()) {
+        emitStatus(profileId, "idle");
+        appendLog(profileId, `Stopped as part of ${group.name}`);
+        result.stoppedProfileIds.push(profileId);
       }
       return result;
     },

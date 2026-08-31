@@ -11,9 +11,10 @@ import {
 import { activeDisplayPortCount } from "../port-display";
 import { canOpenProfilePort } from "../profile-actions";
 import { useI18n } from "../i18n";
-import type { DashboardSnapshot, LaunchProfile, Project } from "../types";
+import type { DashboardSnapshot, LaunchGroup, LaunchProfile, Project } from "../types";
 import type { RunSession } from "../types";
 import { IconButton } from "./IconButton";
+import { LaunchGroupSection, type GroupAction } from "./LaunchGroupSection";
 import { RunHistorySection, type RunHistoryLabels } from "./RunHistorySection";
 import { StatusBadge } from "./StatusBadge";
 
@@ -28,6 +29,12 @@ interface OverviewViewProps {
   onOpenPort: (profile: LaunchProfile) => void;
   onOpenDirectory: (projectId: string) => void;
   onOpenLogs: (profile: LaunchProfile, project: Project) => void;
+  busyGroups?: ReadonlyMap<string, GroupAction>;
+  onNewGroup?: () => void;
+  onEditGroup?: (group: LaunchGroup) => void;
+  onDeleteGroup?: (group: LaunchGroup) => void;
+  onStartGroup?: (group: LaunchGroup) => void;
+  onStopGroup?: (group: LaunchGroup) => void;
   runHistory?: RunSession[];
   runHistoryLoading?: boolean;
   runHistoryError?: string | null;
@@ -50,6 +57,12 @@ export function OverviewView({
   onOpenPort,
   onOpenDirectory,
   onOpenLogs,
+  busyGroups = new Map(),
+  onNewGroup = () => undefined,
+  onEditGroup = () => undefined,
+  onDeleteGroup = () => undefined,
+  onStartGroup = () => undefined,
+  onStopGroup = () => undefined,
   runHistory = [],
   runHistoryLoading = false,
   runHistoryError,
@@ -124,6 +137,18 @@ export function OverviewView({
           {restoreBusy ? t("overview.restoring") : t("overview.restoreSet")}
         </button>
       </section>
+
+      <LaunchGroupSection
+        groups={snapshot.launchGroups}
+        projects={snapshot.projects}
+        monitorOnly={monitorOnly}
+        busyGroups={busyGroups}
+        onNew={onNewGroup}
+        onEdit={onEditGroup}
+        onDelete={onDeleteGroup}
+        onStart={onStartGroup}
+        onStop={onStopGroup}
+      />
 
       <section className="data-section" aria-labelledby="profiles-heading">
         <div className="section-heading">

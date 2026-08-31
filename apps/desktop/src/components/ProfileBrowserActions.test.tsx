@@ -34,6 +34,7 @@ const snapshot: DashboardSnapshot = {
   ports: [],
   projects: [udpProject],
   restoreSet: { profileIds: [], savedAt: null },
+  launchGroups: [],
   privilege: { elevated: false, elevationAvailable: true, monitorOnly: false },
   settings: {
     pollIntervalMs: 2_000,

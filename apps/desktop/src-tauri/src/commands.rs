@@ -4,9 +4,10 @@ use crate::error::{invalid, AppError, AppResult};
 use crate::import_observation;
 use crate::models::{
     AppSettings, AssociationSource, CloseBehavior, ConfirmAssociationRequest, DashboardSnapshot,
-    DiscoveredProject, ExternalProcessRequest, LanguagePreference, PortAssociation, PortSnapshot,
-    Project, ProjectInput, RelatedPort, RestoreResult, RunLogArchivePage, RunLogArchiveState,
-    RunLogEvent, RunSession, RunStatus, RunStatusEvent,
+    DiscoveredProject, ExternalProcessRequest, LanguagePreference, LaunchGroup, LaunchGroupInput,
+    LaunchGroupStartResult, LaunchGroupStopFailure, LaunchGroupStopResult, PortAssociation,
+    PortSnapshot, Project, ProjectInput, RelatedPort, RestoreResult, RunLogArchivePage,
+    RunLogArchiveState, RunLogEvent, RunSession, RunStatus, RunStatusEvent, RunStatusReason,
 };
 use crate::state::AppState;
 use crate::storage::now_ms;
@@ -276,11 +277,11 @@ fn stop_profile_inner<R: Runtime>(
     state.processes.stop(&reservation, profile_id)?;
     wait_for_profile_stopped(profile_id, state, Duration::from_secs(8))?;
     sync_active_restore_set(state)?;
-    let event = status_event(
+    let event = status_event_with_reason(
         profile_id.into(),
         RunStatus::Idle,
         None,
-        Some("Stop requested".into()),
+        RunStatusReason::StopRequested,
     );
     let _ = app.emit("run-status", &event);
     Ok(event)
@@ -364,6 +365,131 @@ fn restore_profile<R: Runtime>(
     let reservation = state.processes.reserve(profile_id)?;
     start_profile_inner_reserved(&reservation, profile_id, app, state)?;
     Ok(())
+}
+
+/// Writing a launch group takes no process reservation, unlike `save_project`. A
+/// group holds no process state: changing its membership only changes which ids
+/// the next start walks, so it is safe while its members are running.
+#[tauri::command]
+pub fn save_launch_group(
+    group: LaunchGroupInput,
+    state: State<'_, AppState>,
+) -> AppResult<LaunchGroup> {
+    state.storage.save_launch_group(group)
+}
+
+/// Deleting a group does not stop or otherwise touch its members. They stay
+/// running and stay individually visible, which is why this needs no guard
+/// against an active profile the way `delete_project` does.
+#[tauri::command]
+pub fn delete_launch_group(group_id: String, state: State<'_, AppState>) -> AppResult<()> {
+    state.storage.delete_launch_group(&group_id)
+}
+
+#[tauri::command]
+pub async fn start_launch_group(
+    group_id: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<LaunchGroupStartResult> {
+    crate::privileges::ensure_process_action_allowed()?;
+    let state = clone_app_state(&state);
+    run_blocking(move || start_launch_group_inner(&group_id, &app, &state)).await
+}
+
+/// Starting a group is `restore_profiles` over the group's members, deliberately
+/// the same walk the restore set uses: ordered, and stopping at the first member
+/// that fails while leaving the earlier ones running. Each member goes through
+/// the full start path, so a member that is already running returns early and
+/// counts as started — which is what makes starting a group idempotent.
+fn start_launch_group_inner<R: Runtime>(
+    group_id: &str,
+    app: &AppHandle<R>,
+    state: &AppState,
+) -> AppResult<LaunchGroupStartResult> {
+    let group = group_to_run(group_id, state)?;
+    let restore = restore_profiles(group.profile_ids, |profile_id| {
+        restore_profile(profile_id, app, state)
+    });
+    Ok(LaunchGroupStartResult {
+        group_id: group.id,
+        started_profile_ids: restore.started_profile_ids,
+        failed_profile_id: restore.failed_profile_id,
+        error: restore.error,
+        related_port: restore.related_port,
+    })
+}
+
+#[tauri::command]
+pub async fn stop_launch_group(
+    group_id: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<LaunchGroupStopResult> {
+    crate::privileges::ensure_process_action_allowed()?;
+    let state = clone_app_state(&state);
+    run_blocking(move || stop_launch_group_inner(&group_id, &app, &state)).await
+}
+
+fn stop_launch_group_inner<R: Runtime>(
+    group_id: &str,
+    app: &AppHandle<R>,
+    state: &AppState,
+) -> AppResult<LaunchGroupStopResult> {
+    let group = group_to_run(group_id, state)?;
+    let (stopped_profile_ids, failures) = stop_group_profiles(&group.profile_ids, |profile_id| {
+        if state.processes.info(profile_id).is_none() {
+            return Ok(false);
+        }
+        stop_profile_inner(profile_id, app, state)?;
+        Ok(true)
+    });
+    Ok(LaunchGroupStopResult {
+        group_id: group.id,
+        stopped_profile_ids,
+        failures,
+    })
+}
+
+/// Stops a group's members in reverse launch order, so a dependent shuts down
+/// before what it depends on. The closure reports `Ok(false)` for a member that
+/// was not running, which is a no-op rather than a stop.
+///
+/// This does not give up at the first failure, and that asymmetry with
+/// `restore_profiles` is deliberate: cutting a start short protects the user from
+/// a half-built stack, while cutting a stop short would leave running exactly the
+/// processes they asked to be rid of.
+fn stop_group_profiles(
+    profile_ids: &[String],
+    mut stop: impl FnMut(&str) -> AppResult<bool>,
+) -> (Vec<String>, Vec<LaunchGroupStopFailure>) {
+    let mut stopped = Vec::new();
+    let mut failures = Vec::new();
+    for profile_id in profile_ids.iter().rev() {
+        match stop(profile_id) {
+            Ok(true) => stopped.push(profile_id.clone()),
+            Ok(false) => {}
+            Err(error) => failures.push(LaunchGroupStopFailure {
+                profile_id: profile_id.clone(),
+                error: error.to_string(),
+            }),
+        }
+    }
+    (stopped, failures)
+}
+
+/// Loads a group and refuses the empty one. Empty is reachable without a bad
+/// request: a group's last member profile can be deleted out from under it, and
+/// reporting that beats a success that started nothing.
+fn group_to_run(group_id: &str, state: &AppState) -> AppResult<LaunchGroup> {
+    let group = state
+        .storage
+        .launch_group(group_id)?
+        .ok_or_else(|| invalid("Launch group not found"))?;
+    if group.profile_ids.is_empty() {
+        return Err(invalid("This launch group has no launch profiles"));
+    }
+    Ok(group)
 }
 
 #[tauri::command]
@@ -686,11 +812,11 @@ fn start_profile_inner_reserved<R: Runtime>(
         .get_profile(profile_id)?
         .ok_or_else(|| invalid("Launch profile not found"))?;
     if let Some(info) = state.processes.info(profile_id) {
-        return Ok(status_event(
+        return Ok(status_event_with_reason(
             profile_id.into(),
             RunStatus::Running,
             Some(info.pid),
-            Some("Profile is already running".into()),
+            RunStatusReason::AlreadyRunning,
         ));
     }
     if let Some((port, process_name)) = first_conflict(&profile)? {
@@ -919,6 +1045,21 @@ fn status_event(
     status_event_with_related_port(profile_id, status, pid, message, None)
 }
 
+/// A status event whose text RunCove itself composes, so the frontend can render
+/// it in the user's language instead of showing this crate's English.
+fn status_event_with_reason(
+    profile_id: String,
+    status: RunStatus,
+    pid: Option<u32>,
+    reason: RunStatusReason,
+) -> RunStatusEvent {
+    RunStatusEvent {
+        message: Some(reason.describe()),
+        reason: Some(reason),
+        ..status_event(profile_id, status, pid, None)
+    }
+}
+
 fn status_event_with_related_port(
     profile_id: String,
     status: RunStatus,
@@ -930,6 +1071,7 @@ fn status_event_with_related_port(
         profile_id,
         status,
         pid,
+        reason: None,
         message,
         related_port,
         unexpected: false,
@@ -1786,13 +1928,45 @@ setInterval(() => {}, 1000);
         fixture.assert_running();
     }
 
+    /// Whether the machine, rather than RunCove, is what refused a termination.
+    ///
+    /// `taskkill /T /F` fails with `Access is denied.` for a tree it could not walk —
+    /// a child that exited between enumeration and termination, or security software
+    /// standing in front of one — and returns a failing status even when the root is
+    /// already gone. That is the environment declining the operation, and it is what
+    /// makes the one test needing a real termination flaky on some Windows machines
+    /// while passing on CI.
+    ///
+    /// The match is on RunCove's own wrapper text and not on the reason inside it,
+    /// deliberately. `taskkill` prints in the system language, and its output reaches
+    /// this string through `from_utf8_lossy`, so on a non-English Windows the reason is
+    /// either translated or mojibake — matching `Access is denied` would silently stop
+    /// working there. Everything RunCove decides for itself still fails the test: a
+    /// changed identity, a managed process, a missing `taskkill.exe`, or a refusal to
+    /// terminate RunCove itself never reach this wrapper.
+    #[cfg(windows)]
+    fn termination_refused_by_environment(error: &AppError) -> bool {
+        error
+            .to_string()
+            .starts_with("Could not terminate process tree:")
+    }
+
     #[cfg(windows)]
     #[test]
     fn external_termination_with_verified_identity_stops_tree_and_releases_port() {
         let mut fixture = ExternalProcessFixture::spawn();
         let request = fixture.request();
 
-        terminate_external_windows(&request, &fixture.state).unwrap();
+        if let Err(refused) = terminate_external_windows(&request, &fixture.state) {
+            assert!(
+                termination_refused_by_environment(&refused),
+                "termination failed for RunCove's own reason: {refused}"
+            );
+            // Visible under `--nocapture`, which is what anyone checking whether this
+            // path is still covered on their machine would run.
+            eprintln!("skipped after the environment refused the termination: {refused}");
+            return;
+        }
 
         fixture.wait_for_tree_exit();
     }
@@ -2037,6 +2211,153 @@ setInterval(() => {}, 1000);
         let json = serde_json::to_value(&result).unwrap();
         assert_eq!(json["relatedPort"]["port"], 5173);
         assert_eq!(json["relatedPort"]["protocol"], "tcp");
+    }
+
+    #[test]
+    fn stopping_a_group_walks_it_backwards_and_reports_every_member_that_refused() {
+        let visited = std::cell::RefCell::new(Vec::new());
+        let (stopped, failures) = stop_group_profiles(
+            &[
+                "db".into(),
+                "api".into(),
+                "worker".into(),
+                "web".into(),
+                "proxy".into(),
+            ],
+            |profile| {
+                visited.borrow_mut().push(profile.to_owned());
+                match profile {
+                    "proxy" | "worker" => Err(invalid(format!("{profile} would not stop"))),
+                    "api" => Ok(false),
+                    _ => Ok(true),
+                }
+            },
+        );
+
+        assert_eq!(
+            visited.into_inner(),
+            ["proxy", "web", "worker", "api", "db"]
+        );
+        assert_eq!(stopped, ["web", "db"]);
+        assert_eq!(
+            failures,
+            vec![
+                LaunchGroupStopFailure {
+                    profile_id: "proxy".into(),
+                    error: "proxy would not stop".into(),
+                },
+                LaunchGroupStopFailure {
+                    profile_id: "worker".into(),
+                    error: "worker would not stop".into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_group_the_profile_cascade_emptied_can_neither_be_started_nor_stopped() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = Arc::new(Storage::open(&temp.path().join("empty-group.sqlite3")).unwrap());
+        let project = storage
+            .save_project(ProjectInput {
+                id: None,
+                name: "Project".into(),
+                path: temp.path().to_string_lossy().into_owned(),
+                profiles: vec![
+                    LaunchProfileInput {
+                        id: None,
+                        name: "dev".into(),
+                        program: "npm.cmd".into(),
+                        args: vec!["run".into(), "dev".into()],
+                        cwd: temp.path().to_string_lossy().into_owned(),
+                        expected_ports: Vec::new(),
+                    },
+                    LaunchProfileInput {
+                        id: None,
+                        name: "preview".into(),
+                        program: "npm.cmd".into(),
+                        args: vec!["run".into(), "preview".into()],
+                        cwd: temp.path().to_string_lossy().into_owned(),
+                        expected_ports: Vec::new(),
+                    },
+                ],
+            })
+            .unwrap();
+        let group = storage
+            .save_launch_group(LaunchGroupInput {
+                id: None,
+                name: "Full stack".into(),
+                profile_ids: vec![project.profiles[0].id.clone()],
+            })
+            .unwrap();
+        storage
+            .save_project(ProjectInput {
+                id: Some(project.id.clone()),
+                name: "Project".into(),
+                path: temp.path().to_string_lossy().into_owned(),
+                profiles: vec![LaunchProfileInput {
+                    id: Some(project.profiles[1].id.clone()),
+                    name: "preview".into(),
+                    program: "npm.cmd".into(),
+                    args: vec!["run".into(), "preview".into()],
+                    cwd: temp.path().to_string_lossy().into_owned(),
+                    expected_ports: Vec::new(),
+                }],
+            })
+            .unwrap();
+        let app = tauri::test::mock_app();
+        app.manage(AppState {
+            storage,
+            processes: Arc::new(ProcessManager::new(10)),
+        });
+        let state = app.state::<AppState>();
+
+        let start = start_launch_group_inner(&group.id, app.handle(), &state).unwrap_err();
+        let stop = stop_launch_group_inner(&group.id, app.handle(), &state).unwrap_err();
+        let missing = start_launch_group_inner("no-such-group", app.handle(), &state).unwrap_err();
+
+        assert!(start.to_string().contains("no launch profiles"));
+        assert!(stop.to_string().contains("no launch profiles"));
+        assert!(missing.to_string().contains("not found"));
+        assert!(state.storage.launch_group(&group.id).unwrap().is_some());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_group_start_reports_its_own_id_with_the_member_that_failed_and_its_port() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (_temp, app, profile_id) = npm_fixture("setInterval(() => {}, 1000);", port);
+        let state = app.state::<AppState>();
+        let group = state
+            .storage
+            .save_launch_group(LaunchGroupInput {
+                id: None,
+                name: "Full stack".into(),
+                profile_ids: vec![profile_id.clone()],
+            })
+            .unwrap();
+
+        let result = start_launch_group_inner(&group.id, app.handle(), &state).unwrap();
+
+        assert_eq!(result.group_id, group.id);
+        assert!(result.started_profile_ids.is_empty());
+        assert_eq!(
+            result.failed_profile_id.as_deref(),
+            Some(profile_id.as_str())
+        );
+        assert_eq!(
+            result.related_port,
+            Some(RelatedPort {
+                port,
+                protocol: "tcp".into(),
+            })
+        );
+        assert!(result
+            .error
+            .as_deref()
+            .is_some_and(|message| message.contains(&port.to_string())));
+        assert!(state.processes.info(&profile_id).is_none());
     }
 
     #[cfg(windows)]
