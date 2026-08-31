@@ -146,6 +146,31 @@ describe("ProjectModal safe discovery imports", () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
+  it("keeps every field reachable by its own name once validation errors are showing", async () => {
+    const user = userEvent.setup();
+    const fields = ["Project name", "Project directory", "Name", "Program", "Working directory"];
+    renderModal({
+      onDiscover: vi.fn().mockResolvedValue(safeProject),
+      onSave: vi.fn().mockResolvedValue(undefined),
+    });
+
+    await user.type(screen.getByLabelText("Project directory"), safeProject.path);
+    await user.click(screen.getByRole("button", { name: "Inspect directory" }));
+    await screen.findByDisplayValue("Web App");
+
+    for (const field of fields) {
+      await user.clear(screen.getByLabelText(field));
+    }
+    await user.click(screen.getByRole("button", { name: "Save project" }));
+
+    // Each cleared field now renders its error message inside the same <label>,
+    // so a field that took its name from the label's text would answer to
+    // "Program This field is required." and to nothing a user could guess.
+    for (const field of fields) {
+      expect(screen.getByLabelText(field)).toHaveAttribute("aria-invalid", "true");
+    }
+  });
+
   it("localizes profile copying and field-level validation in Chinese", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn().mockResolvedValue(undefined);

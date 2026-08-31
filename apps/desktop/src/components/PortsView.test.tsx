@@ -19,6 +19,7 @@ const snapshot: DashboardSnapshot = {
   },
   runLogArchive: { enabled: false, available: true, unavailableReason: null },
   restoreSet: { profileIds: [] },
+  launchGroups: [],
   projects: [],
   ports: [{
     port: 5173,

@@ -2,6 +2,56 @@
 
 All notable user-facing changes to RunCove are documented in this file.
 
+## [0.4.0] - 2026-08-31
+
+### Added
+
+- Named launch groups. A group is an ordered set of launch profiles that starts or
+  stops as one unit, and you can keep as many groups as you need. Members may come
+  from different projects, so one group can bring up a database, an API, and a web
+  front end together.
+- Whole-group start walks the members in the order you set, waiting for each one's
+  expected port before moving on, exactly as a single-profile start does. A member
+  that is already running counts as started, so pressing Start again only fills in
+  what is missing.
+- A failed whole-group start stops before the next member and keeps everything that
+  already started. The message names the member it stopped at, how many started
+  before it, and offers the same View occupant action as a single-profile conflict.
+- Whole-group stop walks the members in reverse. A member it cannot stop does not
+  stop the rest: the report counts every failure and names the first one.
+- Each group shows its startup order and whether it is fully running, partly
+  running, or not running. Deleting a launch profile removes it from every group
+  that used it, and a group left with no members stays visible and says so.
+
+### Fixed
+
+- Process stop and exit messages now follow the interface language. RunCove sends a
+  machine-readable reason with each run-status event and translates it in the window,
+  so a Simplified Chinese interface no longer shows English sentences such as
+  `Stopped by user` in the status toast or the log drawer. A reason this build does
+  not recognize still falls back to the English sentence rather than to nothing.
+- Fields in the project editor keep their own names once validation errors appear. A
+  field whose error message sat inside its label used to take that message into its
+  accessible name, so a screen reader announced `Program This field is required.`
+  as the field's name and repeated the error, and the field no longer answered to
+  the name shown on screen.
+- Saving an existing project records the time it was saved. Every project's
+  modification time previously kept showing the time it was first added.
+
+### Known Limitations
+
+- The desktop database migrates from schema version 2 to version 3 to store launch
+  groups. The migration runs in one transaction and stays at version 2 if it fails,
+  but a successful migration is a one-way step: v0.3.0 and earlier cannot open the
+  resulting version 3 database. Back up RunCove's application data directory before
+  running this build for the first time.
+- A launch group starts and stops only when you press its button. There is no
+  start-at-login and no automatic project startup, by design.
+- If the final buffered flush itself fails, an archive's line count may over-report
+  which buffered line reached disk. Accepted rather than fixed: the byte count is
+  reconciled from the file, the row is already reported as partial with a write
+  error, and nothing but the display reads the line count.
+
 ## [0.3.0] - 2026-08-21
 
 ### Added

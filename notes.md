@@ -1,5 +1,355 @@
 # RunCove Implementation Notes
 
+## 2026-08-31 Accessible Names: A Wrapping Label Absorbs Its Own Error Text
+
+- **The defect, measured before it was fixed.** Five fields in `ProjectModal.tsx` wrapped
+  their `<input>` in a `<label>` that also renders that field's validation error, and the
+  accessible name of an input labelled by a wrapping `<label>` is the label's whole text
+  content. So the moment an error appeared, `Program` became
+  `Program This field is required.` and the field answered to a name nobody would look
+  for. The error was already wired through `aria-describedby`, so it was also being
+  announced twice. Confirmed as red first: the new test failed at
+  `getByLabelText("Project name")` with all five fields invalid, then passed after the
+  fix, with no other assertion touched.
+- **Why the existing suite could not see it.** `ProjectModal.test.tsx`'s validation test
+  queries every field *before* it submits and then holds the element references
+  (`:125-129`, asserting at `:135-136`), so it never asks for a field by name while an
+  error is on screen. That is the exact window the defect lives in — worth remembering as
+  a shape, not just as one bug: a query taken before the state change cannot observe a
+  name that only breaks after it.
+- **The fix is `id` + `aria-labelledby` on the caption**, matching `LaunchGroupModal.tsx`,
+  which pins the name to the caption regardless of what else the label renders. Five
+  source sites, three of them inside the profile loop so their ids carry the index:
+  `project-name-label`, `project-path-label`, and `profile-${index}-{name,program,cwd}-label`.
+  **Five, not the "~13" an earlier note estimated** — that number counted runtime
+  instances of the looped fields, and the source sites are what get edited.
+- **Deliberately unchanged**: the argument and expected-port inputs, whose labels are
+  `<div>`s and whose inputs already carry explicit `aria-label`s, and the root-import
+  checkbox, which needs its `aria-label` precisely because its label holds a paragraph of
+  project metadata.
+
+## 2026-08-31 Branch And PR: Three Commits Because Two Milestones Share Four Files
+
+- **P1 and P2 cannot be split by commit.** `models.rs`, `commands.rs`, `App.tsx`, and
+  `messages.ts` each carry both the run-status `reason` work and the launch-group work
+  (measured interleave: `commands.rs` group 46 / reason 16, `messages.ts` group 66 /
+  reason 18, `models.rs` group 12 / reason 30, `App.tsx` group 30 / reason 8). Splitting
+  them needs hunk-level staging, interactive `git add -p` is unavailable in this
+  environment, and the halves would not build. So the granularity chosen was **every
+  commit builds on its own**: `f8a2447` the matrix fix, `fc56693` all code, `6b80f61` all
+  documentation, `842efb9` the accessible-name fix. The feature commit's body records why
+  the run-status fix rides along, so the decision is auditable from `git log` alone.
+- **`git push` to `origin/feat/launch-groups` failed once with `Recv failure: Connection
+  was reset` and succeeded on the immediate retry**, with no proxy configured. Retry
+  before diagnosing; nothing was half-pushed.
+- The `gh pr create` body went through a file rather than a heredoc: a heredoc carrying
+  the body tripped bash's parser (`unexpected EOF while looking for matching '`). Write
+  the body to a file outside the repository and pass `--body-file`.
+
+## 2026-08-31 P2 Decision: Launch Groups Add Persistence And A UI, Not A Second Launcher
+
+- **Decision: the runtime mechanism was already there, so the feature is persistence plus a
+  thin command layer.** `restore_profiles` is already an ordered, fail-fast launcher and
+  `wait_for_profile_ready` already waits for the expected ports to listen under this
+  profile's own process tree. `start_launch_group` therefore loads the group and calls
+  `restore_profiles`, and no new state machine, no new event, and no new poll exist. Three
+  behaviors come free rather than being re-implemented: a member that is already running
+  returns `AlreadyRunning` and counts as started, which makes a group start idempotent and
+  turns Start into "fill the gaps"; the first failure stops the walk and keeps what
+  started; and the `relatedPort` payload that drives `View occupant` arrives unchanged.
+- **Decision: two tables, not a field in the settings JSON, and `ON DELETE CASCADE` is the
+  entire reason.** Deleting a profile has to remove it from every group that listed it. In
+  the JSON that means every read filters dangling ids forever and one missed filter is a
+  crash; in SQLite it is one clause the database enforces. The price is a schema version
+  bump, which the user authorized on 2026-08-31 for exactly this. Positions may then have
+  holes, which costs nothing because every read is `ORDER BY position` and no code treats a
+  position as an index.
+- **Decision: stop walks in reverse and does not stop the rest.** Start fails fast because
+  continuing past a failed dependency starts things that cannot work; stop cannot borrow
+  that reasoning, because interrupting a stop leaves *more* processes running than
+  finishing it. Each member goes through the same `stop_profile_inner`, a failure lands in
+  `failures`, and the walk continues — the same choice `processes.rs`'s
+  `stop_all_with_intent` already made.
+- **Decision: a group has no stored state.** Running / partial / idle is derived in
+  `components/launch-group.ts` from member statuses the snapshot already carries, so the
+  backend gained no status column and no group event, and the derived answer cannot drift
+  from the members. "Up" means `running` or `starting`; `conflict` is not up, which is the
+  repository's existing rule and not a new one.
+- **Decision: groups may cross projects.** Members reference `launch_profiles(id)`
+  directly. A database in one project and a web app in another is the case that motivates
+  the feature, so forbidding it would remove the point.
+- **Decision: reservations stay per member.** `restore_profile` already reserves one
+  profile at a time and `reserve_many` was not used, so
+  `start_profile_inner_reserved`'s contract did not change. The cost is that a user can
+  still act on an individual profile while a group is starting; restore shipped and was
+  verified with exactly that cost.
+- **Decision: empty groups are refused at validation.** `validate_launch_group` requires a
+  trimmed non-empty name, at least one member, no duplicate members, and every referenced
+  profile to exist. A group with no members has a Start button that means nothing.
+- **Decision: `group.*` message keys, not the planned `dialog.group*`.** The plan proposed
+  putting the modal's strings under `dialog.`, which would have split one feature's
+  vocabulary across two prefixes for no gain. Everything the feature says now lives under
+  `group.`, in both `enMessages` and `zhCnMessages`; `zhCnMessages` is typed
+  `Record<MessageKey, Message>`, so a missing or extra key fails `typecheck` rather than
+  shipping a blank label.
+- **Decision: `busyGroups` is a `Map<string, GroupAction>`, not a `Set`.** The button has to
+  say which action is in flight — "Starting…" and "Stopping…" are different labels on
+  different buttons — so membership alone is not enough information. The per-profile busy
+  set is then *derived*: `effectiveBusyProfileIds` unions the real `busyProfileIds` with
+  every member of every busy group, so a group action disables its members' individual
+  buttons without a second source of truth that could get out of step.
+- **A real defect was found in passing and fixed: `save_project` rewound `updated_at`.** The
+  insert read `VALUES (?1, ?2, ?3, ?4, ?4)`, binding `created_at` into both timestamp
+  columns, so every new project's `updated_at` was its creation time and the column was
+  wrong from the first write. It is `?5` with `now` bound separately
+  (`storage.rs:63-66`). Unrelated to launch groups; found while reading the upsert that
+  `save_launch_group` was modeled on.
+- **`LaunchGroupModal`'s inputs have programmatic names; `ProjectModal`'s still do not.**
+  The modal's name field uses `id="group-name-label"` plus `aria-labelledby`, because a
+  label that is only visually adjacent leaves the input nameless to a screen reader.
+  `ProjectModal.tsx` has the same pattern at roughly thirteen sites and was **left
+  unfixed on purpose**: it is a pre-existing defect in a file this feature does not touch,
+  and folding a thirteen-site accessibility change into this diff would make both harder to
+  review. The new `.field-error` rule in `styles.css` does incidentally style
+  `ProjectModal`'s existing error text, which is a cosmetic improvement, not the fix.
+- **The e2e overflow assertion had to be rewritten, and the reason generalizes: `scrollWidth`
+  cannot measure overflow anywhere in this app.** Four `responsive.spec.ts` failures were my
+  own instrument, not the layout. Every `IconButton` renders its tooltip as an absolutely
+  positioned `::after` pseudo-element that is invisible until hover and up to 220px wide;
+  `scrollWidth` includes it, so any row containing an icon button reports overflow it does
+  not have. `expectRowFitsViewport` (`responsive.spec.ts:41`) measures the right edge of the
+  row's real buttons against the viewport instead. No assertion was weakened — the new one
+  fails on real overflow and the old one failed on a tooltip. Note also that
+  `.restore-sequence` is a horizontal scroll container by design, so overflow *inside* it is
+  correct behavior.
+- **No `V0.4.0_PLAN.md` was created.** `V0.2.1_PLAN.md` and `V0.3.0_PLAN.md` are precedent,
+  but P3's goal is to get agent-facing documents out of the repository, so adding a third
+  would push against the direction already chosen. The plan stayed in the session plan file;
+  the durable record is this section plus the `HANDOFF.md` checkpoint.
+- **Verification, run before any number was written into a document.** Root crate: fmt ok,
+  clippy clean under `-D warnings`, `38 passed; 0 failed` across five targets — unchanged,
+  since the root crate has no part in this feature. Desktop crate in
+  `apps/desktop/src-tauri`: fmt ok, clippy clean in 56.30s, `cargo test --all-targets`
+  `250 passed; 0 failed; 1 ignored` (from 240), including the environment-dependent
+  `external_termination_with_verified_identity_stops_tree_and_releases_port`, which passed
+  through its `Ok` path so its P1-3 guard is still unexercised. Frontend in `apps/desktop`:
+  lint and typecheck clean, `npm test -- --run` `26 passed (26)` files /
+  `208 passed (208)` tests in 21.70s (from 23 / 171), `npm run build` JS 335.03 kB / CSS
+  38.32 kB, `npm run e2e` `7 passed (18.8s)` (from 6), `npm run tauri build` exit 0 —
+  `1m 37s` first, then `56s` on the rebuild that restored the production identifier.
+- **Migration evidence, on a throwaway bundle identifier, with the real database never
+  opened.** The desktop tests build their fixtures in memory, so only this exercises an
+  install path. A pinned version 2 database — `V1_SCHEMA` + `V1_FIXTURE` + `V2_ADDITION`
+  copied out of `storage.rs`, plus one `complete` archive row, `user_version=2`, eight
+  tables — was staged into `%LOCALAPPDATA%\com.abysswhale.runcove.demo0831\`, opened once by
+  a build whose identifier and instance mutex both carried `demo0831`, and afterwards read
+  back: `user_version=3`, ten tables, both new tables matching the pinned DDL including
+  `COLLATE NOCASE`, `integrity_check` ok, `foreign_key_check` ok, and every fixture row
+  intact down to the restore set's order. A group whose members were deliberately out of
+  profile sort order then survived a second 14-second session unchanged, with nothing on
+  stderr. `%LOCALAPPDATA%\com.abysswhale.runcove\runcove.sqlite3` is still `user_version=1`,
+  last written 2026-08-11, read from its SQLite header without opening the file.
+- **`INSTANCE_MUTEX_NAME` is hardcoded, so changing the bundle identifier alone does not
+  isolate a build.** `lib.rs:42` is a literal and `single_instance.rs:61` derives the wake
+  event as `{name}.Wake`, so a demo build that changed only the identifier would still share
+  the guard with production: launching it would wake the running RunCove and start nothing,
+  and the experiment would measure a process that never ran. Both were changed for the demo
+  build and both were reverted; `git grep demo0831` finds nothing.
+- **A verification trap that silently produced a false pass.** The first attempt seeded the
+  database with Microsoft Store Python, whose writes under `%LOCALAPPDATA%` are redirected
+  into `%LOCALAPPDATA%\Packages\PythonSoftwareFoundation.Python.3.13_*\LocalCache\Local\`.
+  The app found no database, created a fresh version 3 one, and every reading came back
+  "correct" while the version 2 → 3 upgrade had never run. Two files with the same path
+  existed and Python and PowerShell each saw a different one. Rule for next time: stage
+  anything under `%LOCALAPPDATA%` with PowerShell, and let Python work on a copy under
+  `D:\tmp`.
+- **Three post-run differences in the isolated database are correct behavior, not data
+  loss.** The session left `running` by the previous kill became `interrupted`, which is
+  startup reconciliation; `archiveRunLogs` appeared in the settings JSON, which is the
+  `#[serde(default)]` round-trip; and `languagePreference` went from `zh-CN` to `system`
+  because `App.tsx:389-393` deliberately lets WebView `localStorage` win over the database
+  when they disagree, and an earlier run in that throwaway WebView profile had stored
+  `system`. On a real install the two agree, so this is an artifact of reusing one WebView
+  profile across differently-seeded databases.
+- **The one-way upgrade is now stated in `README.md` in both languages**, together with the
+  recommendation to back up `%LOCALAPPDATA%\com.abysswhale.runcove\` before running a `main`
+  build for the first time. A failed upgrade rolls back and stays at version 2; a successful
+  one cannot be undone, and v0.3.0 then refuses the database as newer than it supports.
+
+## 2026-08-30 P1-4 Decision: Green Across The Matrix, `0.3.1` Held Back For `0.4.0`
+
+- **Verification, run from the repository root unless noted.** Root crate: fmt ok, clippy
+  clean under `-D warnings`, `cargo test --all-targets` `38 passed; 0 failed` across five
+  targets (`12 + 0 + 0 + 10 + 16`). Desktop crate in `apps/desktop/src-tauri`: fmt ok,
+  clippy clean, `240 passed; 0 failed; 1 ignored`. Frontend in `apps/desktop`: lint and
+  typecheck clean, `npm test -- --run` `23 passed (23)` files / `171 passed (171)` tests,
+  `npm run build` 1607 modules in 1.73s, `npm run e2e` `6 passed (18.5s)`,
+  `npm run tauri build` exit 0 with the release profile finishing in `1m 55s`.
+- **`tauri build` producing no installer is the configured behavior, not a failure.**
+  `tauri.conf.json` sets `bundle.active: false`, so the command builds
+  `target/release/runcove-desktop.exe` and stops; packaging belongs to the release
+  workflow. That exe was rebuilt and not launched — it carries the production identifier.
+- **A defect in `AGENTS.md`'s matrix was found while following it.** It listed the three
+  `cargo` commands once, at the root. The root package is not a workspace
+  (`Cargo.toml` has no `[workspace]`), so those commands never reach `runcove-desktop`:
+  following the recipe literally skipped 240 tests plus that crate's fmt and clippy.
+  `AGENTS.md` now carries both Rust blocks and states the reason, so the omission cannot
+  be read as intentional. The enforced gate was never weaker — `ci.yml:110-119` already
+  runs all three commands in `apps/desktop/src-tauri` — so this was a documentation
+  defect in the local completion gate, not a hole in CI.
+- **Decision: the next version is `0.3.1`, and it should not be released on its own.**
+  The delta since `v0.3.0` is a single user-visible bug fix (RunCove's own lifecycle
+  sentences showing in English under a Chinese interface) with no feature and no break;
+  the IPC `reason` field is additive and optional, and 0.x still gets a patch bump for
+  that. Holding it: a release costs a tag, a CI run, and published artifacts, and `0.4.0`
+  is already reserved for the P2 feature, which this fix can ride with. `CHANGELOG.md`'s
+  `[Unreleased]` section accumulates either way, so nothing is lost if the user decides to
+  ship the patch sooner.
+- **No version file was edited.** A bump would touch root `Cargo.toml`,
+  `apps/desktop/src-tauri/Cargo.toml`, `tauri.conf.json`, `apps/desktop/package.json`, and
+  `package-lock.json` (lines 3 and 9), plus the two cargo lockfiles — all four manifests
+  currently read `0.3.0`. A bump is only meaningful with a release, and release is
+  unauthorized, so the number is a recommendation and nothing on disk asserts it.
+
+## 2026-08-30 P1-3 Decision: The Environment's Refusal Is Not The Test's Verdict
+
+- **Decision: a runtime guard on the refusal, not `#[ignore]`.**
+  `external_termination_with_verified_identity_stops_tree_and_releases_port`
+  (`commands.rs:1830`) is the only test that performs a real termination, and it fails
+  intermittently on this machine with Windows `Access denied` while passing on CI. It now
+  treats a refusal from `taskkill` as an environment refusal — reported through
+  `eprintln!`, then `return` — and keeps failing on every error RunCove decides for
+  itself. Test code only; no production behavior changed.
+- **Why not `#[ignore]`, which is what the other live test uses.**
+  `live_imports_detect_conflicts_without_touching_existing_processes`
+  (`commands.rs:1884`) needs live services configured by hand and can never run
+  unattended. This one builds its own fixture and works on CI, so `#[ignore]` would
+  remove the only check of the successful path everywhere — CI does not run
+  `-- --ignored` — to quiet one machine. That is coverage loss disguised as a guard.
+- **Why the predicate matches RunCove's wrapper and not the OS reason.**
+  `termination_refused_by_environment` (`commands.rs:1822`) tests for the prefix
+  `"Could not terminate process tree:"` (`commands.rs:1050`). `taskkill` prints in the
+  system language and its stderr reaches that message through `from_utf8_lossy`, so on a
+  non-English Windows — this one is Windows 11 Home China — matching `Access is denied`
+  would be either a translation miss or mojibake. The prefix is narrow by enumeration:
+  every other `Err` in `terminate_external_windows` is RunCove's own verdict (changed
+  identity, changed executable, managed process, missing `taskkill.exe`, refusing itself,
+  an unreadable handle) and none of them begins with it.
+- **Why `taskkill`'s own failure is environmental rather than a product defect.** Its
+  `/T` walk reports `Access is denied.` for a child that exited between enumeration and
+  termination, or for one security software stands in front of, and it returns a failing
+  status even when the root is already gone. RunCove reporting that failure is correct —
+  judging success by "the root looks dead" instead would risk leaving children behind, so
+  the process-safety model stays as it is and the guard belongs in the test.
+- **The guard is unexercised.** The flake did not reproduce: 10 consecutive dedicated
+  runs plus a parallel and a single-threaded full suite all took the `Ok` path. Say it
+  that way rather than claiming the flake is fixed — the next `Access denied` on any
+  machine is the first real exercise, and it will show as a pass with a `--nocapture`
+  line.
+- Verification: desktop crate `240 passed; 0 failed; 1 ignored`, identical in parallel
+  and single-threaded; `fmt --check` and `clippy --all-targets --all-features -D warnings`
+  clean. Test count unchanged, since a body changed and no test was added.
+
+## 2026-08-30 P1-2 Decision: The Line-Count Over-Report Is Accepted, Not Fixed
+
+- **Decision: close P2-1 as a disclosed limitation.** When the *closing* flush itself
+  fails, `line_count` can name a line the file does not hold. The reasoning now lives
+  at `return_file` (`archive.rs:2618-2636`), where the defect is, so nobody re-derives
+  it. No production behavior and no test changed — this item was a decision, not an
+  implementation.
+- **Why it is tolerable.** Nothing decides on `line_count`: the quota and eviction read
+  `byte_size` and the timestamps, and `byte_size` is already re-measured from the file
+  on exactly this path (both close sites, `archive.rs:2728` and `:2955`). The viewer
+  already treats the row's counters as possibly stale and pages from the file itself
+  (`models.rs:415-417`). The error is always an over-count, never a silent loss, and the
+  same close already labels the row `partial` / `write-error`, so the user is told the
+  archive is broken before they read any number on it.
+- **Why "count at flush boundaries" — the plan's own option — does not work.** A flush
+  can also go out *partially*. Saying which buffered lines survived needs every buffered
+  line's byte length, kept for every open session on every write, to describe a disk that
+  has already failed. This was already the code's stated reason and it still holds.
+- **Why recounting the file does not work either — the finding that decided it.** The
+  close already measures that file, so a recount looks nearly free. But the two counts
+  would then disagree about identical bytes: `Sweep::count_lines` (`archive.rs:1311`)
+  uses `text.lines().count()`, which counts a trailing fragment as a line, while a short
+  write here charges the fragment to `dropped_lines` and reports `line_count` 0 — pinned
+  by `"a fragment is not a line"` (`archive.rs:4988`). The same file would read one line
+  longer after a crash than after a close. Exactness therefore means unifying that
+  definition across the sweep, the writer, and their tests: re-opening a settled contract
+  for a display-only number. Two smaller costs point the same way — `read_to_string`
+  fails on a flush truncated mid-UTF-8 and would fall back to the same over-count, and
+  the read is up to 10 MiB per session at close time, including `close_all` at shutdown,
+  on a disk that has just failed.
+- **What the decision obliges.** The limitation stays disclosed. `CHANGELOG.md` gained an
+  `[Unreleased]` section that carries it forward and records P1-1's fix; the published
+  `[0.3.0]` entry is left exactly as it shipped, including its now-superseded English-
+  message limitation, because a released section is a historical record.
+
+## 2026-08-30 P1-1 Decisions: Lifecycle Reasons Cross The Wire As Values
+
+- **The frontend translates, the backend does not.** RunCove's own lifecycle
+  sentences were being composed in Rust and shown verbatim in a Chinese window.
+  The fix sends `RunStatusReason` — an internally-tagged enum whose `kind` is
+  kebab case — on both `RunStatusEvent` and `RunLogEvent`, and translates it in the
+  existing i18n catalog. The alternative, passing the window's language down to the
+  backend, was rejected: it would put copy in two places and make every emit site
+  language-aware.
+- **Additive, not a replacement.** `reason` is optional and skipped when absent;
+  `message` and `line` keep the English sentence from `RunStatusReason::describe`.
+  So an unrecognized `kind` — a newer backend, or a payload nothing validated —
+  falls back to readable English instead of rendering nothing. This is why
+  `types.ts` declares `kind: string` rather than a union of literals.
+- **Scope is RunCove's own sentences only.** The eight converted strings are the six
+  `watch_child` exit arms and `commands.rs`'s `"Stop requested"` and
+  `"Profile is already running"`. `AppError` text — the port-conflict message and the
+  `error.to_string()` start failures — is untouched: it has no fixed enumeration, it
+  is already framed by `t("error.lifecycleDetail", …)`, and the conflict wording also
+  travels as the command's `Err`. Localizing it is a separate, much larger job.
+- **Archived lifecycle lines stay English.** The archive stores `line`, and
+  `encode_record` writes exactly three keys (`{t,s,l}`) at schema version 2. Adding a
+  reason to the file would be a format change for a cosmetic gain, so the archive
+  viewer shows what was written. The live drawer shows the localized form because it
+  has the event.
+- **`logKey` still hashes `line`.** The dedupe that merges history with live output
+  must compare the stable wire text, not a rendering that changes with the language.
+- Tests were written on the defect path only, per the new policy: the bilingual
+  mapping with its two fallbacks, a zh-CN notice, a zh-CN failure alert, a zh-CN log
+  line whose clipboard copy matches the screen, and — in Rust — the kebab-case `kind`
+  and the omitted-field shape, because a rename there would quietly restore English.
+- Verification: root crate `38 passed` across six test targets; desktop crate
+  `240 passed; 0 failed;
+  1 ignored`; `fmt --check` and `clippy --all-targets --all-features -D warnings`
+  clean in both crates; frontend `lint`, `typecheck`, `test -- --run`
+  (23 files / 171 tests), `build`, `e2e` (6) green. `npm run tauri build` is left to
+  P1-4's full matrix. `external_termination_with_verified_identity_stops_tree_and_releases_port`
+  passed in this run, so P1-3's guard is still needed — the failure is intermittent
+  on this machine, not gone.
+
+## 2026-08-30 Decisions: 软著 Dropped, Product Work Resumes
+
+- The software copyright registration goal is abandoned. Reported policy since
+  2026-03 is that 中国版权保护中心 refuses applications built on AI-generated
+  code, with 失信名单 / 个人征信 consequences, and that 2026 review adds
+  AI-material screening and code-similarity comparison. RunCove's code is
+  substantially agent-written and its public repository documents that, so the
+  application path is closed. Removing AI traces to make it pass was declined and
+  is not a task anyone should revive. The official text could not be fetched from
+  this environment, so this is consistent secondary reporting; confirm at
+  ccopyright.com.cn if the question ever matters again.
+- The AI-trace audit that preceded the decision is worth keeping because it is
+  measured: production and test source carry zero AI-vendor references — every
+  `git grep` hit under `apps/desktop/src` and `apps/desktop/e2e` is the user's own
+  `D:\CodexProject\personal-projects` path in fixtures. The references live in
+  `HANDOFF.md` (21), `notes.md` (12), `V0.3.0_PLAN.md` (1), and in two commit
+  bodies carrying `🤖 Generated with [Qoder]` plus `[codex]` in the `bd2b777`
+  merge body.
+- Testing process changed: the slice-by-slice red-to-green method used for the
+  v0.3.0 archive is retired. Tests follow real defect paths and regression risk
+  from now on. The rule against weakening, retargeting, or deleting an assertion
+  to reach green is unchanged.
+- The next plan is in `HANDOFF.md`, not here: P1 defect closure, P2 one v0.4.0
+  feature awaiting the user's pick, P3 authorization-gated housekeeping.
+
 ## 2026-08-22 v0.3.0 Publication Checkpoint
 
 - PR #3 was merged and the public `v0.3.0` release was published successfully.

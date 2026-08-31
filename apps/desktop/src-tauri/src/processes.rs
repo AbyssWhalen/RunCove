@@ -2,6 +2,7 @@ use crate::archive_service::ArchiveService;
 use crate::error::{invalid, AppResult};
 use crate::models::{
     ArchiveClosedEvent, LaunchProfile, LogStream, RunLogEvent, RunStatus, RunStatusEvent,
+    RunStatusReason,
 };
 use crate::state::AppState;
 use crate::storage::now_ms;
@@ -554,44 +555,49 @@ fn watch_child<R: Runtime>(
                     .lock()
                     .expect("exit intent mutex poisoned")
                     .remove(&info.profile_id);
-                let (exit_code, status, unexpected, message) = match (intent, result) {
+                let (exit_code, status, unexpected, reason) = match (intent, result) {
                     (Some(ExitIntent::UserStop), Ok(status)) => (
                         status.code(),
                         RunStatus::Idle,
                         false,
-                        Some("Stopped by user".into()),
+                        RunStatusReason::UserStop,
                     ),
                     (Some(ExitIntent::Shutdown), Ok(status)) => (
                         status.code(),
                         RunStatus::Idle,
                         false,
-                        Some("Stopped during application shutdown".into()),
+                        RunStatusReason::Shutdown,
                     ),
                     (Some(ExitIntent::StartupFailure), Ok(status)) => (
                         status.code(),
                         RunStatus::Exited,
                         false,
-                        Some("Stopped because startup did not become ready".into()),
+                        RunStatusReason::StartupNotReady,
                     ),
                     (_, Ok(status)) if status.success() => (
                         status.code(),
                         RunStatus::Exited,
                         false,
-                        Some("Process exited normally".into()),
+                        RunStatusReason::ExitedNormally,
                     ),
                     (_, Ok(status)) => (
                         status.code(),
                         RunStatus::Exited,
                         true,
-                        Some(format!("Process exited unexpectedly with {status}")),
+                        RunStatusReason::ExitedUnexpectedly {
+                            code: status.code(),
+                        },
                     ),
                     (_, Err(error)) => (
                         None,
                         RunStatus::Unknown,
                         true,
-                        Some(format!("Could not wait for process: {error}")),
+                        RunStatusReason::WaitFailed {
+                            detail: error.to_string(),
+                        },
                     ),
                 };
+                let message = reason.describe();
                 context
                     .statuses
                     .lock()
@@ -642,7 +648,8 @@ fn watch_child<R: Runtime>(
                 let log = RunLogEvent {
                     profile_id: info.profile_id.clone(),
                     stream: LogStream::System,
-                    line: message.clone().unwrap_or_else(|| "Process exited".into()),
+                    line: message.clone(),
+                    reason: Some(reason.clone()),
                     timestamp: now_ms(),
                 };
                 capture_log(
@@ -655,7 +662,13 @@ fn watch_child<R: Runtime>(
                 let _ = context.app.emit("run-log", &log);
                 let _ = context.app.emit(
                     "run-status",
-                    process_exit_status_event(info.profile_id.clone(), status, unexpected, message),
+                    process_exit_status_event(
+                        info.profile_id.clone(),
+                        status,
+                        unexpected,
+                        reason,
+                        message,
+                    ),
                 );
             },
         );
@@ -703,13 +716,15 @@ fn process_exit_status_event(
     profile_id: String,
     status: RunStatus,
     unexpected: bool,
-    message: Option<String>,
+    reason: RunStatusReason,
+    message: String,
 ) -> RunStatusEvent {
     RunStatusEvent {
         profile_id,
         status,
         pid: None,
-        message,
+        reason: Some(reason),
+        message: Some(message),
         related_port: None,
         unexpected,
         timestamp: now_ms(),
@@ -737,6 +752,7 @@ fn emit_lifecycle_error<R: Runtime>(app: &AppHandle<R>, profile_id: &str, messag
             profile_id: profile_id.into(),
             status: RunStatus::Unknown,
             pid: None,
+            reason: None,
             message: Some(message),
             related_port: None,
             unexpected: true,
@@ -841,6 +857,7 @@ fn capture_stream<S: Read + Send + 'static, R: Runtime>(
                             profile_id: context.profile_id.clone(),
                             stream: kind,
                             line: format!("[log read error: {error}]"),
+                            reason: None,
                             timestamp: now_ms(),
                         };
                         capture_log(
@@ -878,6 +895,7 @@ fn capture_stream<S: Read + Send + 'static, R: Runtime>(
                 profile_id: context.profile_id.clone(),
                 stream: kind,
                 line,
+                reason: None,
                 timestamp: now_ms(),
             };
             capture_log(
@@ -1152,16 +1170,19 @@ mod tests {
 
     #[test]
     fn exited_status_event_does_not_expose_stale_pid() {
+        let reason = RunStatusReason::ExitedNormally;
         let event = process_exit_status_event(
             "profile".into(),
             RunStatus::Exited,
             false,
-            Some("Process exited normally".into()),
+            reason.clone(),
+            reason.describe(),
         );
 
         assert_eq!(event.profile_id, "profile");
         assert_eq!(event.status, RunStatus::Exited);
         assert_eq!(event.pid, None);
+        assert_eq!(event.reason, Some(RunStatusReason::ExitedNormally));
         assert_eq!(event.message.as_deref(), Some("Process exited normally"));
         assert_eq!(event.related_port, None);
         assert!(!event.unexpected);
@@ -1281,6 +1302,7 @@ mod tests {
             profile_id: "profile".into(),
             stream: LogStream::Stderr,
             line: "served on 3100".into(),
+            reason: None,
             timestamp: now_ms(),
         };
 
@@ -1314,6 +1336,7 @@ mod tests {
                     profile_id: profile_id.into(),
                     stream: LogStream::Stdout,
                     line: format!("line-{timestamp}"),
+                    reason: None,
                     timestamp,
                 },
             );

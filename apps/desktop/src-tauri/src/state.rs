@@ -20,6 +20,7 @@ impl AppState {
         let mut projects = self.storage.list_projects()?;
         apply_runtime_status(&mut projects, &self.processes);
         let restore_set = self.storage.restore_set()?;
+        let launch_groups = self.storage.list_launch_groups()?;
         let settings = self.storage.settings()?;
         let associations = self.storage.list_associations()?;
         let mut system = System::new_all();
@@ -126,6 +127,7 @@ impl AppState {
             ports,
             projects,
             restore_set,
+            launch_groups,
             settings,
             privilege: crate::privileges::current_status()?,
             generated_at: now_ms(),

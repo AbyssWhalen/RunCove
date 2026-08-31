@@ -1,5 +1,481 @@
 # RunCove Handoff
 
+## 2026-08-31 Committed, Pushed, And Open As PR #4
+
+The launch-group work is on **`feat/launch-groups`**, pushed to `origin`, and open as
+[PR #4](https://github.com/AbyssWhalen/RunCove/pull/4) against `main`. `main` and
+`origin/main` are **still at `cae4d28`** — nothing is merged — and no version file was
+touched, so all five manifests still read `0.3.0`. The working tree is clean. The section
+below this one describes the same feature before any of it was committed; read this one
+for where the code now lives.
+
+Four commits, chosen so that **each one builds on its own**:
+
+| Commit | Contents |
+| --- | --- |
+| `f8a2447` | `chore:` the `AGENTS.md` matrix fix — both Cargo packages spelled out |
+| `fc56693` | `feat:` all 30 code paths: schema 3, storage, commands, the whole frontend |
+| `6b80f61` | `docs:` `CHANGELOG.md`, `README.md`, `HANDOFF.md`, `notes.md` |
+| `842efb9` | `fix:` the project-editor accessible-name defect and its regression test |
+
+**P1 and P2 could not be separated**, and the reason is measured rather than preferred:
+`models.rs`, `commands.rs`, `App.tsx`, and `messages.ts` each contain both the run-status
+`reason` additions and the launch-group additions, interactive `git add -p` is unavailable
+here, and a hunk-level split would produce commits that do not build. `fc56693`'s body
+says so, so the decision is auditable from `git log` without this file.
+
+**The accessible-name defect is now fixed** — the item the previous section carried as
+still open. Five fields in `ProjectModal.tsx` wrapped their input in a `<label>` that also
+renders the field's validation error, so an input's accessible name became
+`Program This field is required.` as soon as validation ran, and the error was announced
+twice. Each caption now carries an `id` and each input an `aria-labelledby`, matching
+`LaunchGroupModal.tsx`. It is **five source sites, not the "~13"** the earlier note
+estimated — that number counted runtime instances of the three looped per-profile fields.
+The regression test clears all five fields, submits, and looks each one up by its own name
+while invalid; it was confirmed red before the fix. Frontend counts moved from
+26 files / 208 tests to **26 files / 209 tests**.
+
+Verified locally after the fix: `npm run lint`, `typecheck`, `test -- --run`
+(26 files / 209 tests), `build`, and `e2e` (7 passed) all clean. Both Cargo packages were
+left untouched by this commit — `git status` showed only the two `ProjectModal` files — so
+their numbers stand from the matrix run recorded below: root 38, desktop 250 + 1 ignored.
+
+**CI is green on `842efb9`**, the branch tip — run
+[33376342697](https://github.com/AbyssWhalen/RunCove/actions/runs/33376342697), all five
+jobs `success`: `Rust lint` (1m20s), `Windows desktop` (10m6s), and `CLI` on
+`ubuntu-latest` (23s), `macos-latest` (1m8s), and `windows-latest` (1m8s). This is the
+first CI run this feature has had, and it is the one that matters most: `Windows desktop`
+is the job that runs the desktop crate's tests, the frontend suite, and `tauri build` on
+the target platform, so it independently reproduces the local matrix rather than
+restating it. No workflow file was touched — opening the PR is what triggered it.
+
+**Still unauthorized, each needing its own ask:** merging PR #4; publishing `0.4.0` at all
+(the version bump across five manifests, the tag, the release workflow, the GitHub
+Release); and every P3 housekeeping item. Two operational notes carry forward unchanged:
+`apps/desktop/src-tauri/target/release/runcove-desktop.exe` is a **production-identifier
+build that must not be launched**, because opening it would upgrade the real database to
+schema 3 irreversibly; and the pre-upgrade backup of that database sits hash-verified at
+`%LOCALAPPDATA%\RunCove-backup-v0.3.0-2026-08-31\runcove.sqlite3`.
+
+## 2026-08-31 P2 Done: Launch Groups, On Schema Version 3
+
+The v0.4.0 feature the user picked is implemented end to end and the full `AGENTS.md`
+matrix is green. Nothing is committed; `main` and `origin/main` are still at `cae4d28`
+and no version file was touched. A group is a **named, editable, ordered set of launch
+profiles that starts or stops as one unit**, and there can be as many as the user keeps —
+which is what the single implicit restore set could never be.
+
+**What landed.**
+
+- **Schema version 3** (`storage.rs:967`, `upgrade_to_version_3` at `:1094`): the two
+  tables `launch_groups` and `launch_group_members`, one transaction with
+  `PRAGMA user_version=3` last, so a failure rolls back and stays at version 2. Built
+  exactly like `upgrade_to_version_2`, `IF NOT EXISTS` deliberately omitted for the same
+  reason. `SCHEMA_VERSION`, the test literal `CURRENT_SCHEMA_VERSION` (`:1164`), and the
+  pinned `V3_ADDITION` fixture (`:1937`) are three independent statements of the same
+  shape, so drift fails a test rather than passing silently.
+- **Storage**: `save_launch_group` (upsert in one transaction, members deleted and
+  reinserted with `position` from the input order), `delete_launch_group`,
+  `list_launch_groups`, `launch_group`, and `validate_launch_group`.
+- **Backend types and commands**: `LaunchGroup`, `LaunchGroupInput`,
+  `LaunchGroupStartResult`, `LaunchGroupStopResult`, `LaunchGroupStopFailure`;
+  `save_launch_group`, `delete_launch_group`, `start_launch_group`, `stop_launch_group`,
+  registered in `lib.rs:275-278`. `DashboardSnapshot` carries `launch_groups`, so groups
+  arrive on the existing one-second poll and there is no new fetch command and no new
+  event.
+- **Start is one line of reuse**, not a second ordered launcher: `start_launch_group`
+  calls the existing `restore_profiles`, which already stops before the next member on a
+  failure and keeps what started. Three behaviors come free — the full per-profile start
+  path including the conflict pre-check and the expected-port wait, an already-running
+  member counting as started (so Start only fills gaps and the whole action is
+  idempotent), and the `relatedPort` payload that drives `View occupant`.
+- **Stop walks in reverse and does not stop the rest.** Each member goes through the same
+  `stop_profile_inner`; a failure is recorded in `failures` and the walk continues.
+  Interrupting a stop would only leave more processes running, and this matches
+  `processes.rs` `stop_all_with_intent`, which already collects rather than aborts.
+- **Frontend**: `components/launch-group.ts` (the only place the judgment lives —
+  `deriveGroupStatus`, `resolveGroupMembers`, validation), `LaunchGroupSection.tsx`,
+  `LaunchGroupModal.tsx`, the Overview placement below the restore band, `App.tsx`
+  wiring, `types.ts`, `api.ts`, `mock-data.ts` with a seeded group, bilingual `group.*`
+  messages, and `styles.css`.
+
+**Decisions worth not re-deriving.**
+
+- **Authorized 2026-08-31**: schema version 3 and its two tables; start stops at the first
+  failure and keeps what started; scope is whole-group start and stop only, with no group
+  integration into the restore set; UI lives on Overview under the restore band. The
+  `HANDOFF.md` clause forbidding "any schema change beyond version 2" is superseded — see
+  **Not Authorized From This Checkpoint** below, which now says so.
+- **Groups may cross projects.** Members reference `launch_profiles(id)` directly, so a
+  database in project A and a web app in project B is an ordinary group. That is the point
+  of the feature, not an accident of the schema.
+- **A group has no stored state.** `deriveGroupStatus` computes running / partial / idle
+  from the member statuses already in the snapshot, so the backend gained no status field
+  and no group event. A group is "running" only when every member is up, where up means
+  `running` or `starting` — `conflict` is not up.
+- **`ON DELETE CASCADE` to `launch_profiles` is the whole reason groups are tables** rather
+  than a field in the settings JSON: deleting a profile removes it from every group that
+  listed it, so no read has to filter dangling references. Positions may then have holes,
+  which is harmless because every read is `ORDER BY position` and no code treats a position
+  as an array index. An emptied group stays visible instead of vanishing.
+- **Reservations stay per member**, as `restore_profile` already does; `reserve_many` was
+  not used. The cost is that a user can still act on one profile mid-group; the benefit is
+  that `start_profile_inner_reserved`'s contract did not change. Restore shipped this way
+  and was verified this way.
+- **No new `V0.4.0_PLAN.md`.** P3 wants agent-facing documents out of the repository, so
+  adding one would push the wrong way. The plan lives in the session plan file; the record
+  lives here and in `notes.md`.
+- **Still refused, by design**: no start at Windows login and no automatic project startup.
+  A group starts only when its button is pressed. Launch groups must not become a back door
+  to a feature `README.md:209` and `CHANGELOG.md` record as out of scope.
+
+**Verification, all green, run before any number was written down.**
+
+- **Root crate** (`runcove`): fmt ok, clippy `--all-targets --all-features -D warnings`
+  clean, `cargo test --all-targets` `38 passed; 0 failed` (`12 + 0 + 0 + 10 + 16`) —
+  unchanged, as expected: the root crate has nothing to do with this feature.
+- **Desktop crate**: fmt ok, clippy clean (56.30s), `cargo test --all-targets`
+  `250 passed; 0 failed; 1 ignored`, up from 240. The environment-dependent
+  `external_termination_with_verified_identity_stops_tree_and_releases_port` passed here
+  again through its `Ok` path, so its P1-3 guard is still unexercised.
+- **Frontend**: `lint` and `typecheck` clean, `npm test -- --run` `26 passed (26)` files /
+  `208 passed (208)` tests in 21.70s (from 23 / 171), `npm run build` JS 335.03 kB / CSS
+  38.32 kB, `npm run e2e` `7 passed (18.8s)` (from 6).
+- **`npm run tauri build`**: exit 0. It was run twice — once at `1m 37s` on the tree, and
+  again after the isolated-identifier experiment so the artifact matches the reverted
+  source: `56s` total, cargo `46.57s`, `25,869,303` bytes at `2026/8/31 15:23:18`. The
+  rebuilt exe contains `com.abysswhale.runcove` twice, `demo0831` zero times, and the
+  launch-group strings — checked by reading the binary, not assumed. **It carries the
+  production identifier, so it must not be launched**: doing so would upgrade the real
+  database to version 3.
+
+**The migration was proven on a throwaway identity, and the real database was never
+opened.** This is the part that cannot be replaced by tests, because the tests build their
+fixtures in memory and never touch an install path.
+
+- **Method**: `tauri.conf.json`'s identifier temporarily set to
+  `com.abysswhale.runcove.demo0831` **and** `lib.rs:42`'s `INSTANCE_MUTEX_NAME` set to
+  match, built, copied to `D:\tmp\runcove-v040-demo\RunCove-demo0831.exe`, both edits then
+  reverted and the revert confirmed with `git diff` and `git grep demo0831` (no hits).
+- **The mutex had to change too, and that is a real trap.** `INSTANCE_MUTEX_NAME` is a
+  hardcoded literal, not derived from the bundle identifier, and `single_instance.rs:61`
+  builds the wake event as `{name}.Wake`. An isolated build with only the identifier
+  changed still shares the single-instance guard with production: it would wake the
+  running RunCove instead of starting itself, and the experiment would silently measure
+  nothing.
+- **Genuine version 2 → 3 upgrade**: a pinned version 2 database (the `V1_SCHEMA` +
+  `V1_FIXTURE` + `V2_ADDITION` text copied out of `storage.rs`, plus one `complete`
+  archive row; `user_version=2`, eight tables) was staged into the isolated data
+  directory, the demo build opened it once, and afterwards `user_version=3`, ten tables,
+  both new tables with the exact pinned DDL including `COLLATE NOCASE`, `integrity_check`
+  ok, `foreign_key_check` ok, and every fixture row intact — project, both profiles in
+  order, both expected ports, the port association, the three run sessions, the restore
+  set still `0=prof-2, 1=prof-1`, `restore_saved_at`, and the archive row.
+- **Real group rows survive a real session**: a group whose members are deliberately out
+  of profile sort order (`0=prof-2, 1=prof-1`) was seeded into the upgraded database; the
+  build ran 14s with the snapshot loop reading it and exited with the rows and the order
+  unchanged and nothing on stderr.
+- **Two changes the run made are correct, not data loss**: the session left `running` by
+  the previous kill became `interrupted` (startup reconciliation), and `archiveRunLogs`
+  appeared in the settings JSON (`#[serde(default)]` round-trip). The
+  `languagePreference` went from `zh-CN` to `system` for a third reason that is also not
+  a defect: `App.tsx:389-393` makes WebView `localStorage` win over the database when the
+  two disagree, and an earlier run in that same throwaway WebView profile had stored
+  `system`. A real install's `localStorage` and database agree.
+- **A verification trap worth remembering**: the first attempt seeded the database with
+  Microsoft Store Python, whose writes under `%LOCALAPPDATA%` are redirected into
+  `%LOCALAPPDATA%\Packages\PythonSoftwareFoundation.Python.3.13_*\LocalCache\Local\`. The
+  app therefore found no database, created a fresh version 3 one, and the check would have
+  reported success while never exercising the upgrade at all. Stage files under
+  `%LOCALAPPDATA%` with PowerShell and let Python work on a copy under `D:\tmp`.
+- **The real database was confirmed untouched**: `%LOCALAPPDATA%\com.abysswhale.runcove\
+  runcove.sqlite3` is still `user_version=1`, last written 2026-08-11, read from its
+  SQLite header without opening it. `demo0819` remains at 2, `qa` at 1.
+
+**Carried limitations, unchanged by this work.**
+
+- **The version 3 upgrade is one-way.** Each upgrade runs in one transaction and stays at
+  the previous version if it fails, but a successful one cannot be undone: once a version 3
+  database exists, the frozen v0.3.0 refuses it as newer than it supports. Anyone running a
+  `main` build for the first time should back up
+  `%LOCALAPPDATA%\com.abysswhale.runcove\` first. `README.md` now says this in both
+  languages. **A backup was already taken on 2026-08-31**:
+  `%LOCALAPPDATA%\RunCove-backup-v0.3.0-2026-08-31\runcove.sqlite3`, 69,632 bytes,
+  `user_version=1`, hash-verified against the original, which was not modified. Restoring it
+  means copying that one file back; `EBWebView` beside it is a regenerable WebView cache and
+  was not copied.
+- **`line_count` can overstate a session whose closing flush failed** (the 2026-08-18 P2).
+  The byte side self-corrects from disk and the normal path is unaffected. Still open, still
+  deferred, and untouched by launch groups.
+- **`ProjectModal.tsx` still has the accessible-name defect that `LaunchGroupModal.tsx`
+  fixed.** Its labels are plain text with no `id`, so roughly thirteen inputs there have no
+  programmatic name. Left unfixed on purpose: it is a pre-existing defect in a file this
+  feature does not need, and folding a thirteen-site accessibility change into the
+  launch-group diff would make both harder to review. It is worth its own small change.
+- **Nothing is committed** and the version number is still `0.3.0` in all five manifests.
+  Whenever the user authorizes a release, this feature makes the number `0.4.0`, and the
+  `0.3.1` bug fix P1 produced rides along with it.
+- **The isolated build is kept** at `D:\tmp\runcove-v040-demo\RunCove-demo0831.exe` with
+  its data directory and the before/after database copies, so the migration check can be
+  repeated without another identifier edit. It is outside the repository and must stay
+  there.
+
+Next: **P3 housekeeping**, every item of which needs authorization — and the standing
+question of whether to publish `0.4.0`, which needs commit, push, tag, CI, and release
+authorization that has not been given.
+
+## 2026-08-30 P1-4 Done: The Full Matrix Is Green, And The Next Number Is 0.3.1
+
+Everything in `AGENTS.md`'s matrix passed, including the `npm run tauri build` that P1-1
+through P1-3 had deferred. Nothing is committed; no version file was edited. P1 is now
+closed.
+
+- **Root crate** (`runcove`): `cargo fmt --all -- --check` ok, `cargo clippy
+  --all-targets --all-features -- -D warnings` clean, `cargo test --all-targets`
+  `38 passed; 0 failed` across five targets (`12 + 0 + 0 + 10 + 16`).
+- **Desktop crate** (`runcove-desktop`): fmt ok, clippy clean, `cargo test --all-targets`
+  `240 passed; 0 failed; 1 ignored`. Also verified single-threaded during P1-3.
+- **Frontend**: `npm run lint` and `npm run typecheck` clean, `npm test -- --run`
+  `23 passed (23)` files / `171 passed (171)` tests, `npm run build` 1607 modules in
+  1.73s, `npm run e2e` `6 passed (18.5s)`.
+- **`npm run tauri build`**: exit 0, release profile in `1m 55s`, built
+  `apps/desktop/src-tauri/target/release/runcove-desktop.exe`. **No installer was
+  produced, and that is correct**: `tauri.conf.json` sets `bundle.active: false`, so this
+  command only ever builds the executable — the release workflow is what packages. That
+  exe carries the production identifier and still must not be launched.
+- **A defect in the matrix itself was found and fixed.** `AGENTS.md` listed the three
+  `cargo` commands only at the repository root, but `apps/desktop/src-tauri` is a separate
+  package and not a workspace member, so those commands never reached it — a literal
+  reading of the recipe skipped 240 tests plus that crate's fmt and clippy. `AGENTS.md`
+  now has both Rust blocks and says why. The gate itself was never weaker: `ci.yml:110-119`
+  already runs fmt, clippy, and `cargo test --all-targets` in `apps/desktop/src-tauri`.
+- **The version number is `0.3.1`**, and the recommendation is **not to publish it on its
+  own.** The whole user-visible delta since `v0.3.0` is one bug fix — RunCove's own
+  lifecycle sentences appearing in English under a Chinese interface — with no new feature
+  and no breaking change; the IPC `reason` field is additive and optional, so `0.3.1` is
+  what SemVer says. Publishing it separately costs five authorizations and a CI run for a
+  fix the user can already get by rebuilding locally, and `0.4.0` is reserved for the P2
+  feature, which the fix can simply ride along with. `CHANGELOG.md`'s `[Unreleased]`
+  section keeps accumulating either way, so nothing is wasted if the user decides they
+  want the patch out sooner.
+- **Not done, deliberately**: no version file was touched. A bump means editing five
+  manifests — root `Cargo.toml`, `apps/desktop/src-tauri/Cargo.toml`, `tauri.conf.json`,
+  `package.json`, `package-lock.json` (two places) — plus the two lockfiles cargo
+  refreshes, and it only means anything alongside a release, which is unauthorized.
+
+Next: **P2 — the user picks one v0.4.0 feature.** The recommendation in the plan below is
+launch groups.
+
+## 2026-08-30 P1-3 Done: A Refused Termination Is Reported, Not A Failed Test
+
+`external_termination_with_verified_identity_stops_tree_and_releases_port`
+(`commands.rs:1830`) now distinguishes the machine refusing the operation from RunCove
+getting it wrong. Nothing is committed. Test code only — no production behavior changed,
+and the test count is unchanged at 240.
+
+- **`#[ignore]` was rejected**, even though that is the guard the other live test
+  (`commands.rs:1884`) carries. That test needs configured live services and can never
+  run unattended; this one spawns its own fixture and **passes on CI**, so `#[ignore]`
+  would silence the only test of the successful termination path everywhere in order to
+  quiet one machine. CI does not run `-- --ignored`.
+- **What it does instead.** On `Err`, `termination_refused_by_environment`
+  (`commands.rs:1822`) decides: a refusal from `taskkill` itself is reported with
+  `eprintln!` and the test returns; anything else fails the test with that error. On `Ok`
+  the assertions are exactly as before, so CI keeps full coverage.
+- **The predicate matches RunCove's own wrapper text**, `"Could not terminate process
+  tree:"` (`commands.rs:1050`), and deliberately not the reason inside it: `taskkill`
+  prints in the system language and its bytes reach that string through
+  `from_utf8_lossy`, so matching `Access is denied` would silently stop working on a
+  non-English Windows — this machine included. The wrapper is narrow by enumeration:
+  every other `Err` in `terminate_external_windows` is RunCove's own answer (changed
+  identity, changed executable, managed process, missing `taskkill.exe`, refusing
+  itself, an unreadable handle) and none of them starts with that prefix.
+- **The guard is unexercised here, and that is the honest state.** The flake did not
+  reproduce: the test passed through the `Ok` path in 10 consecutive dedicated runs plus
+  a parallel and a single-threaded full suite. Whoever next sees the `Access denied`
+  failure will get a pass with a `--nocapture` line instead, and that is the first real
+  exercise of this path.
+- **Verified**: desktop crate `240 passed; 0 failed; 1 ignored`, identical in parallel
+  and single-threaded (`40.70s`), `fmt --check` and `clippy --all-targets --all-features
+  -D warnings` clean. The root crate and the frontend were untouched.
+
+Next: P1-4 — the full `AGENTS.md` matrix, including the still-unrun
+`npm run tauri build`, then the version number.
+
+## 2026-08-30 P1-2 Done: The Line-Count Over-Report Is Accepted And Recorded
+
+P1-2 is closed as a **disclosed limitation, not a fix**, which is a decision the plan
+required and forbade deferring again. No production behavior changed, no test changed,
+nothing is committed. Three documents carry it: `return_file`'s doc
+(`archive.rs:2618-2636`), a `notes.md` top section with the full reasoning, and a new
+`CHANGELOG.md` `[Unreleased]` section.
+
+- **The defect, stated exactly.** A small record is counted as a line when `write_all`
+  returns into the 64 KiB `BufWriter`. If the *closing* flush then fails, `byte_size` is
+  re-measured from the file (`archive.rs:2728` and `:2955`) but `line_count` can still
+  name a line the file does not hold. Only that path; a normal close is exact.
+- **Both candidate fixes were refuted, and the second one is why this is a decision
+  rather than laziness.** Counting at flush boundaries cannot work — a flush can go out
+  *partially*, so it needs every buffered line's byte length. Recounting the file looks
+  nearly free, since the close already measures it, but `Sweep::count_lines`
+  (`archive.rs:1311`) counts a trailing fragment as a line while a short write here
+  reports that fragment as a dropped line with `line_count` 0
+  (`archive.rs:4988`, `"a fragment is not a line"`). The same file would read one line
+  longer after a crash than after a close, so exactness means unifying that definition
+  across the sweep, the writer, and their tests.
+- **Why accepting is safe.** `line_count` is display-only: the quota and eviction read
+  `byte_size` and the timestamps, the viewer pages from the file and already treats the
+  row's counters as possibly stale (`models.rs:415-417`), the error is always an
+  over-count, and the row is already labeled `partial` / `write-error`.
+- **`CHANGELOG.md` now has `[Unreleased]`** with P1-1's fix under `Fixed` and this
+  limitation under `Known Limitations`. The published `[0.3.0]` entry was **not** edited,
+  including its English-message limitation that P1-1 has since fixed: a released section
+  is a historical record, and `[Unreleased]` is what supersedes it.
+- **Verified** (Rust doc comment only, so the Rust matrix is the relevant part): desktop
+  crate `240 passed; 0 failed; 1 ignored`, root crate `38 passed` across its six test
+  targets (`12 + 0 + 0 + 10 + 16 + 0`; the P1-1 note below said `16`, which was only the
+  largest binary — count all six), `fmt --check` and
+  `clippy --all-targets --all-features -D warnings` clean in both crates. The frontend
+  was untouched; its full matrix belongs to P1-4.
+
+Next: P1-3, the environment guard for
+`external_termination_with_verified_identity_stops_tree_and_releases_port`.
+
+## 2026-08-30 P1-1 Done: A Lifecycle Reason Is Localized, Its Log Line Is Not
+
+P1-1 is closed, and with it the open P2-2. The defect was that RunCove composed its
+own English sentences into `RunStatusEvent.message`, so a Chinese window showed
+`Stopped by user` and `Process exited normally`. Nothing is committed.
+
+- **The wire now carries a value, not a sentence.** `models.rs` gained
+  `RunStatusReason`, an internally-tagged enum (`#[serde(tag = "kind",
+  rename_all = "kebab-case")]`) with eight variants, and `RunStatusReason::describe`
+  is the English form. Both `RunStatusEvent` and `RunLogEvent` gained an optional
+  `reason` under `#[serde(default, skip_serializing_if = "Option::is_none")]`.
+  `message` and `line` are unchanged and still hold the English sentence, so this is
+  an additive upgrade: nothing existing changed meaning.
+- **Eight sentences were converted**, all of them text RunCove itself wrote: the six
+  arms of `watch_child`'s exit classification in `processes.rs`, plus
+  `"Stop requested"` and `"Profile is already running"` in `commands.rs` through the
+  new `status_event_with_reason` helper.
+- **`AppError` text is deliberately out of scope.** The port-conflict message
+  (`commands.rs:702`) and the `error.to_string()` start failures carry no reason and
+  pass through unchanged. That surface is far larger, already framed by
+  `t("error.lifecycleDetail", …)`, and the conflict text also travels as the command's
+  `Err`. Say it that way rather than calling P1-1 partial.
+- **The frontend translates it.** New `src/run-status.ts` mirrors
+  `components/archive.ts`: a kebab-case → `MessageKey` table, `describeRunStatusReason`
+  returning `null` for a kind this build cannot name, and `runStatusText` for the
+  event pair. Nine `runStatus.*` keys were added to both catalogs. `App.tsx`'s status
+  listener and `LogDrawer.tsx` (rendering *and* clipboard, through one `lineText`)
+  are the callers.
+- **An unknown `kind` degrades to the backend's English**, which is why `kind` is a
+  plain `string` in `types.ts` and not a union: nothing validates an IPC payload at
+  runtime.
+- **Two things stay English by design.** `LogDrawer`'s `logKey` dedupe still hashes
+  `line`, so the history/live merge is unaffected; and the archive still stores
+  `line`, so archived lifecycle records remain English. The on-disk format
+  (`{t,s,l}`, schema 2) is untouched and no migration was needed.
+- **Tests, on the defect path only** (per the new policy): `run-status.test.ts` pins
+  all nine keys in both languages plus the unknown-kind and missing-detail fallbacks;
+  two `App.test.tsx` cases assert a zh-CN notice and a zh-CN failure alert show
+  Chinese and not the English `message`; one `LogDrawer.test.tsx` case asserts the
+  drawer renders Chinese, leaves child-process output alone, and copies what it shows.
+  In Rust, `models.rs` pins the kebab-case `kind` and the omitted-field shape, because
+  a rename there would silently return the UI to English.
+- **Verified**: root crate `38 passed` across six test targets; desktop crate
+  `240 passed; 0 failed;
+  1 ignored` (baseline 238/1, +2 new tests); `fmt --check` and
+  `clippy --all-targets --all-features -D warnings` clean in both crates; frontend
+  `lint`, `typecheck`, `test -- --run` (23 files / 171 tests, baseline 22 / 157),
+  `build`, and `e2e` (6) all green. `npm run tauri build` was **not** run here — it
+  belongs to P1-4's full matrix. In this run the environment-dependent
+  `external_termination_with_verified_identity_stops_tree_and_releases_port` passed,
+  which is why P1-3 still needs doing rather than being closed as absent.
+
+Next: P1-2, the `line_count` over-report decision.
+
+## 2026-08-30 Direction Reset: Product Work Resumes, 软著 Dropped
+
+Decisions made today, all by the user:
+
+- **The 软著 workstream is dropped.** Secondary sources agree that since 2026-03
+  中国版权保护中心 forbids applying with AI-generated code, with 失信名单 /
+  个人征信 consequences, and that 2026 review adds AI-material screening and
+  code-similarity comparison. RunCove's code was substantially agent-written and
+  the public repository says so, so that path is closed. No AI-trace scrubbing
+  will be done to serve it. The official text was not readable from this
+  environment; `CLAUDE.md` carries the finding and the confirm-at-source rule.
+- **Testing policy changes.** No more red-tests-first, no more micro-seam tests.
+  Write a test when a real defect path or regression risk justifies it. Existing
+  tests stay; none is deleted to save time. This replaces the slice-by-slice
+  red-to-green process used for the v0.3.0 archive.
+- **Output style.** Chinese, conclusion first, short, no filler.
+
+### The Plan
+
+**P1 — Close the known defects. Start here; no scope debate needed.**
+
+1. **Done 2026-08-30 — see the top section.** `processes.rs:562` and `:580` composed
+   English `"Stopped by user"` and `"Process exited normally"` into
+   `RunStatusEvent.message`, which then appeared under the Chinese UI. The events now
+   carry a machine-readable reason that the frontend i18n layer translates. This was
+   the open P2-2.
+2. **Done 2026-08-30 — see the top section.** P2-1 (`archive.rs:2636`, `return_file`):
+   `line_count` can over-report when the closing flush itself fails. Decided as an
+   accepted, disclosed limitation, with both candidate fixes refuted on record. It is
+   now in `CHANGELOG.md`'s `[Unreleased]` section as well.
+3. **Done 2026-08-30 — see the top section.**
+   `external_termination_with_verified_identity_stops_tree_and_releases_port`
+   fails on this machine with Windows `Access denied` and passes on CI. It now reports a
+   refusal from `taskkill` and returns instead of failing, while every RunCove-decided
+   error still fails it. `#[ignore]` was rejected: it would drop the coverage on CI too.
+4. **Done 2026-08-30 — see the top section.** Run the full matrix in `AGENTS.md`, then
+   pick the version number. All of it is green, `AGENTS.md`'s own matrix was missing the
+   desktop crate and was fixed, and the number is `0.3.1` — recommended to ship with the
+   P2 feature as `0.4.0` rather than as its own release.
+
+**P2 — One feature for v0.4.0. The user picks.**
+
+**Picked and implemented 2026-08-31 — launch groups. See the top section.** The
+alternatives below stay on record as later candidates, not as open questions.
+
+Recommended: **launch groups.** An ordered set of profiles that start as a unit,
+reusing the expected-port wait and the ordered restore that already exist. It is
+the product form of machinery RunCove already has, and starting a db → api → web
+stack by hand is the daily annoyance the app still does not remove.
+
+Smaller alternatives, as the pick or as a companion:
+
+- Optional HTTP health check: a listening port is not a working service. Treat
+  `Running` as confirmed only when an optional URL answers.
+- Start-failure diagnosis: put the last stderr lines into the failure report
+  instead of one error string.
+
+Rejected with reasons on record: start at login and automatic project startup
+(`notes.md:1612`), `.env` editing (`AGENTS.md:57`), project Git status
+(`V0.3.0_PLAN.md:1905-1908`), Docker and remote hosts, device previews, usage
+analytics.
+
+**P3 — Housekeeping. Each item needs authorization.**
+
+- Untrack the agent-facing documents (`AGENTS.md`, `HANDOFF.md`, `notes.md`,
+  `V*_PLAN.md`) if the user still wants them off GitHub. Move, never delete. The
+  justification is the preference recorded at 2026-08-21 — not publishing
+  tool-specific collaboration files — and not an AI-trace cleanup.
+- A supply-chain audit job, and either a minimum-Rust-version job or dropping the
+  unenforced `rust-version` declarations. Both touch CI, which is a red line.
+
+### Not Authorized From This Checkpoint
+
+Commit, push, tags, CI or release workflow edits, `.env`, any real database. **The
+"no schema change beyond version 2" clause that stood here is superseded**: on
+2026-08-31 the user authorized schema version 3 and its two launch-group tables for
+the v0.4.0 feature (see the top section). Everything else in this list still holds.
+The worktree held no product changes at `cae4d28`;
+all of P1's edits are uncommitted on top of it. No version file was bumped, because a
+bump only means something with a release. Published `v0.3.0` stays exactly as it is.
+
 ## 2026-08-22 v0.3.0 Published And Verified
 
 - The v0.3.0 release is public at

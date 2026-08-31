@@ -1,51 +1,57 @@
-# RunCove v0.3.0
+# RunCove v0.4.0
 
-RunCove v0.3.0 adds an optional persistent archive for managed-session logs.
-The archive is off by default, stays inside RunCove's local application data,
-and does not change the existing in-memory log or process-safety model unless
-you explicitly enable it.
+RunCove v0.4.0 adds launch groups. A group is a named, ordered set of launch
+profiles that starts or stops as one unit, so the set of services you bring up
+every morning becomes one button instead of several.
 
 ## Highlights
 
-- Enable **Archive run logs** from the log drawer for future runs. RunCove does
-  not backfill output from a session that was already running.
-- Reopen archived stdout and stderr from run history. The viewer starts at the
-  tail and loads earlier records in bounded pages.
-- See whether an archive is writing, finalizing, complete, partial, or removed,
-  together with its line count, size, and any dropped output.
-- Delete an archive after confirmation while retaining its run-history entry.
-- Keep disk use bounded at 10 MiB per session and 200 MiB in total. RunCove
-  reclaims the oldest finished archives first and never evicts one still open.
+- Create as many groups as you need, each with its own name and startup order.
+  Members may come from different projects, so one group can bring up a
+  database, an API, and a web front end together.
+- Whole-group start walks the members in the order you set and waits for each
+  one's expected port before moving on, exactly as a single-profile start does.
+  A member that is already running counts as started, so pressing Start again
+  only fills in what is missing.
+- A failed start stops before the next member and keeps everything that already
+  started. The message names the member it stopped at, says how many started
+  before it, and offers the same **View occupant** action as a single-profile
+  port conflict.
+- Whole-group stop walks the members in reverse, and a member it cannot stop
+  does not stop the rest. The report counts every failure and names the first.
+- Each group shows its startup order and whether it is fully running, partly
+  running, or not running. Deleting a launch profile removes it from every group
+  that used it.
 
-## Reliability And Privacy
+## Fixed
 
-- A bounded background queue prevents archive I/O from slowing the child
-  process. If output arrives too quickly, the dropped lines and bytes are
-  reported instead of silently disappearing.
-- Startup recovery repairs interrupted rows and accounts for existing files.
-  Archive paths are restricted to RunCove-generated names inside its dedicated
-  archive directory; links and Windows reparse points are not followed.
-- Archive initialization failure does not stop port scanning, project launch,
-  process control, or the existing in-memory log drawer.
-- Archived output is not filtered. A service can print credentials, tokens,
-  personal data, or other sensitive content, so enable archiving only when that
-  local persistence is appropriate. RunCove uploads no archive data.
+- Process stop and exit messages now follow the interface language. A Simplified
+  Chinese interface no longer shows English sentences such as `Stopped by user`
+  in the status toast or the log drawer.
+- Fields in the project editor keep their own names once validation errors
+  appear, so a screen reader no longer announces `Program This field is
+  required.` as a field's name.
+- Saving an existing project records the time it was saved rather than the time
+  it was first added.
 
 ## Upgrade Note
 
-The desktop database migrates from schema version 1 to version 2 on first
-launch. The migration itself is transactional, but a successful upgrade has no
-downgrade path: RunCove v0.2.1 cannot open the upgraded database. Back up the
-RunCove application-data directory before launching v0.3.0 if you may need to
-return to v0.2.1.
+The desktop database migrates to schema version 3 on first launch to store
+launch groups — from version 2 if you are coming from v0.3.0, and through
+version 2 if you are coming from an older release. Each migration runs in one
+transaction and stays at the previous version if it fails, but a successful
+upgrade has no downgrade path: **v0.3.0 and earlier cannot open the resulting
+version 3 database.** Copy `runcove.sqlite3` out of RunCove's application-data
+directory (`%LOCALAPPDATA%\com.abysswhale.runcove\`) before launching v0.4.0 if
+you may need to return to an earlier version.
 
 ## Known Limitations
 
-- In the rare case that the final buffered flush fails, the archive line count
-  can over-report which buffered line reached disk. The byte count is measured
-  from the file, and normal writes are unaffected.
-- Process stop and normal-exit messages produced by the backend remain English
-  when the interface language is Simplified Chinese.
+- A launch group starts and stops only when you press its button. There is no
+  start-at-login and no automatic project startup, by design.
+- In the rare case that a run log archive's final buffered flush fails, the
+  archive line count can over-report which buffered line reached disk. The byte
+  count is measured from the file, and normal writes are unaffected.
 
 ## Downloads
 

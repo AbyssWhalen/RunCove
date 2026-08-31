@@ -11,6 +11,10 @@ import type {
   DashboardSnapshot,
   DiscoveredProject,
   ExternalProcessRequest,
+  LaunchGroup,
+  LaunchGroupInput,
+  LaunchGroupStartResult,
+  LaunchGroupStopResult,
   Project,
   ProjectInput,
   RestoreResult,
@@ -38,6 +42,13 @@ const tauriApi: RunCoveApi = {
   restartProfile: (profileId) =>
     invoke<RunStatusEvent>("restart_profile", { profileId }),
   restoreLastRunSet: () => invoke<RestoreResult>("restore_last_run_set"),
+  saveLaunchGroup: (group: LaunchGroupInput) =>
+    invoke<LaunchGroup>("save_launch_group", { group }),
+  deleteLaunchGroup: (groupId) => invoke<void>("delete_launch_group", { groupId }),
+  startLaunchGroup: (groupId) =>
+    invoke<LaunchGroupStartResult>("start_launch_group", { groupId }),
+  stopLaunchGroup: (groupId) =>
+    invoke<LaunchGroupStopResult>("stop_launch_group", { groupId }),
   terminateExternalProcess: (request: ExternalProcessRequest) =>
     invoke<void>("terminate_external_process", { request }),
   confirmPortAssociation: (request: ConfirmAssociationRequest) =>

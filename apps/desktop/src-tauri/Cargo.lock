@@ -2771,7 +2771,7 @@ dependencies = [
 
 [[package]]
 name = "runcove"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "clap",
  "colored",
@@ -2784,7 +2784,7 @@ dependencies = [
 
 [[package]]
 name = "runcove-desktop"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "embed-resource",
  "glob",
