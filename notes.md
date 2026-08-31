@@ -1,5 +1,28 @@
 # RunCove Implementation Notes
 
+## 2026-08-31 P3 Housekeeping Disposition
+
+P3 had two halves. One was done, one was declined after measuring it, and the second is the
+decision worth keeping.
+
+- **Deleted the three stale remote branches.** `feat/launch-groups` (`9e6ea53`),
+  `codex/release-v0.3.0` (`4ca80a4`), and `codex/runcove-v0.2.0` (`0a14cea`) were all
+  ancestors of `main`, so deleting the refs lost no commit and rewrote no history; each can
+  be recreated exactly with `git push origin <sha>:refs/heads/<name>`. Two of the three
+  named a tool in the branch name and were publicly visible on the repository page, which
+  is a better reason to remove them than housekeeping was. `origin` now holds `main` alone.
+- **Did not move `V0.2.1_PLAN.md` and `V0.3.0_PLAN.md` out of the tracked tree, which the
+  plan called for.** `notes.md` and `HANDOFF.md` cite `V0.3.0_PLAN.md` about forty times
+  and most of those citations carry line numbers — they are how a decision record points at
+  the design it came from. Untracking the file would leave every clone holding forty
+  references to a file it does not have, which is a direct cost to the one thing this
+  repository's documents are for: letting another reviewer follow a decision to its
+  evidence. The alternative of moving only `V0.2.1_PLAN.md` (three citations, none by line)
+  trades the pair's consistency for one filename. The original motive for this half of P3
+  was the 软著 application's AI-trace scrubbing, and that workstream was dropped on
+  2026-08-30, so what remained was tidiness — not enough to pay that price. Reopen it only
+  together with a plan that rewrites the citations.
+
 ## 2026-08-31 v0.4.0 Release Decisions
 
 - **The release preparation went on the feature branch, not on `main` after the merge.**

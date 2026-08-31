@@ -61,11 +61,31 @@ build against the real database is the intended next step rather than something 
 Prefer the published portable zip over that local build, since the zip is the artifact
 users get. Nothing here has launched either one.
 
-**Still unauthorized, each needing its own ask:** every P3 housekeeping item, including
-moving the agent-facing `V*_PLAN.md` and similar files out of the repository; any rewrite of
-published history (the `[codex]` marker in `bd2b777` and the two `[Qoder]` markers stay);
-and any change to `.github/workflows/`. The `feat/launch-groups` branch was left on
-`origin` rather than deleted.
+**P3 is closed, and only one half of it was carried out.** The user authorized both halves
+on 2026-08-31 and the decision below is the one that came back from actually looking:
+
+- **The three stale remote branches are deleted.** `origin` now holds `main` and nothing
+  else. All three were already ancestors of `main`, so no commit was lost and no history
+  was rewritten: `feat/launch-groups` at `9e6ea53`, `codex/release-v0.3.0` at `4ca80a4`,
+  `codex/runcove-v0.2.0` at `0a14cea`. Any of them can be recreated exactly with
+  `git push origin <sha>:refs/heads/<name>`. Two of the three carried a tool's name in the
+  branch name, which was publicly visible on the repository; that made deleting them worth
+  more than tidiness alone.
+- **The agent-facing plan documents stay tracked.** `V0.2.1_PLAN.md` and `V0.3.0_PLAN.md`
+  were to be moved out of the tracked tree, and they are not, because `notes.md` and this
+  file cite `V0.3.0_PLAN.md` about forty times *with line numbers* — the decision records
+  point into it as evidence. Untracking it would leave a clone with forty references to a
+  file it does not have, which contradicts the standing rule that decisions and verification
+  evidence stay easy for another reviewer to audit. Moving only `V0.2.1_PLAN.md`, which is
+  cited three times and never by line, would buy one filename and cost the consistency of
+  the pair. Reopen this only with a plan that also rewrites the citations.
+
+**Still unauthorized, each needing its own ask:** any rewrite of published history (the
+`[codex]` marker in `bd2b777` and the two `[Qoder]` markers stay); any change to
+`.github/workflows/`; and deleting the four temporary working directories under `D:\tmp\`
+(`runcove-v030-demo`, `runcove-v030-release-verify-20260822-153954`, `runcove-v040-demo`,
+`runcove-v040-verify`, about 59 MB together) — they are this session's scratch space, not
+repository state, and nothing depends on them.
 
 ## 2026-08-31 Committed, Pushed, And Open As PR #4
 
