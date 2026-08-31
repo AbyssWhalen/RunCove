@@ -52,18 +52,37 @@ decision worth keeping.
   Two Scope sections would have carried the same seven-item exclusion list twice in a
   user-facing file, and the per-release detail already lives in `CHANGELOG.md`, so the
   duplicate was dropped and the exclusions kept.
-- **The published archives were verified against GitHub's stored-object digests, not by
-  downloading them.** `release-assets.githubusercontent.com` refused every connection from
-  this machine — `gh release download` and `curl -L` both reset, ~60 attempts across the
-  whole session, while `github.com` and `api.github.com` worked — so the v0.3.0 method of
-  downloading all five archives and running `sha256sum -c` was not available. What was done
-  instead: the `sha256sum` output printed by the `Publish GitHub release` job, which *is*
-  the content of the published `SHA256SUMS.txt`, was diffed against the `digest` field the
-  API reports for each stored asset. The two are produced independently — one on the runner
-  before upload, one by GitHub from the bytes it stored — and all five matched exactly. Say
-  what that proves and what it does not: the published bytes are what CI built and
-  `SHA256SUMS.txt` describes them correctly; whether a downloader elsewhere receives those
-  bytes is not something any check run from here could establish.
+- **The published archives were verified twice, by two methods, and the fallback is worth
+  keeping.** For most of release day `release-assets.githubusercontent.com` refused every
+  connection from this machine — `gh release download` and `curl -L` both reset, ~60
+  attempts, while `github.com` and `api.github.com` worked — so the v0.3.0 method of
+  downloading all five archives and running `sha256sum -c` was unavailable. The substitute:
+  the `sha256sum` output printed by the `Publish GitHub release` job, which *is* the content
+  of the published `SHA256SUMS.txt`, diffed against the `digest` field the API reports for
+  each stored asset. Those are produced independently — one on the runner before upload, one
+  by GitHub from the bytes it stored — and all five matched, which proves the published bytes
+  are what CI built without proving what a downloader elsewhere receives. Later the same day
+  the asset host recovered, and the real check ran: all six assets downloaded, `sha256sum -c`
+  `OK` on all five archives, agreeing with both the digests and the sums below. The desktop
+  zip holds `runcove-desktop.exe` at `FileVersion 0.4.0`, a `README.md` byte-identical to
+  `git show v0.4.0:README.md`, a `CHANGELOG.md` headed `[0.4.0] - 2026-08-31`, and `LICENSE`.
+  Keep the digest method written down: it is the only verification available when the asset
+  CDN is unreachable, and it very nearly was the whole record for this release.
+- **`sha256sum -c SHA256SUMS.txt` fails on the published file, and the bytes are not the
+  reason.** All five lines report `No such file or directory`. `release.yml` builds the file
+  with `sha256sum ./*.zip ./*.tar.gz | sed 's# \./#  #'`, and since `sha256sum` already emits
+  `<hash><space><space>./<name>`, replacing `" ./"` with two spaces yields **three** spaces
+  where the format allows exactly two — so `sha256sum` takes the leading space as part of the
+  filename and looks for `" runcove-…"`. Every archive is intact, and no document gives a
+  wrong command: `RELEASE_NOTES.md:66` says only "verify the archive against
+  `SHA256SUMS.txt`" and `README.md` never mentions the file. The defect is that the obvious
+  way to carry out that instruction fails on a good download, which is worse than cosmetic
+  because five `FAILED` lines read as a corrupt or tampered archive.
+  Normalizing works today —
+  `sed -E 's/^([0-9a-f]{64})[[:space:]]+/\1  /' SHA256SUMS.txt | sha256sum -c -` — and the
+  real fix is `sed 's#\./##'` in the workflow, which is out of bounds here and cannot be
+  applied to an already-published asset regardless. Carried as a v0.5.0 item together with
+  the release-note wording, not patched now.
 - **The checksums themselves, recorded so the claim above can be re-checked without
   trusting it.** These are the sums the workflow computed on the runner and published as
   `SHA256SUMS.txt`, and they equal GitHub's stored-object digest for every asset. Re-verify

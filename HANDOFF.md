@@ -31,21 +31,38 @@ run [33380718489](https://github.com/AbyssWhalen/RunCove/actions/runs/3338071848
 [33383018390](https://github.com/AbyssWhalen/RunCove/actions/runs/33383018390) passed all
 seven jobs, `Validate release version` included, so the tag matched all four manifests.
 
-**The published archives are verified, but not by the same method as v0.3.0 — state it
-that way.** `release-assets.githubusercontent.com` was unreachable from this machine for
-the whole attempt (`gh release download` and `curl` both failed with a reset connection on
-every one of ~60 tries, while `github.com` and `api.github.com` worked), so the artifacts
-could not be downloaded and hashed here. Instead the checksums the workflow computed on the
-runner — which are the literal bytes of the published `SHA256SUMS.txt`, read out of the
-`Publish GitHub release` job log — were diffed against GitHub's own `digest` for each
-stored asset from `gh api repos/.../releases/tags/v0.4.0`. All five archives are identical
-across those two independently produced sources, so the published bytes are what CI built
-and `SHA256SUMS.txt` describes them correctly. What this does *not* establish, and no check
-run from here could, is that a downloader on another network receives those bytes. A
-retry loop was left running afterwards in case the CDN recovered; it never did, and a
-final single-asset attempt at the end of the session still got `302` from `github.com`
-followed by a reset from the asset host, so the digest comparison is the whole of the
-artifact verification.
+**The published archives are verified end to end, by download, to the same standard v0.3.0
+got.** This took two attempts and the first one's method is worth keeping. For most of
+release day `release-assets.githubusercontent.com` refused every connection from this
+machine (`gh release download` and `curl` both reset on ~60 tries, while `github.com` and
+`api.github.com` worked), so the artifacts could not be fetched; the substitute was to diff
+the checksums the workflow computed on the runner — the literal bytes of the published
+`SHA256SUMS.txt`, read out of the `Publish GitHub release` job log — against GitHub's own
+`digest` for each stored asset, and all five matched. Later the same day the asset host
+recovered (`http=200`), all six assets were downloaded, and `sha256sum -c` reported `OK` for
+all five archives, matching both the digests and the five sums recorded in `notes.md`. The
+desktop zip was also opened: it carries `runcove-desktop.exe` at `FileVersion 0.4.0`, plus
+`README.md` byte-identical to `git show v0.4.0:README.md`, `CHANGELOG.md` headed
+`[0.4.0] - 2026-08-31`, and `LICENSE`.
+
+**One real defect surfaced in that check, and it is in the published artifact.** Running
+`sha256sum -c SHA256SUMS.txt` on the published file **fails all five lines** with
+`No such file or directory` — not because any byte is wrong, but because `release.yml`'s
+`sed 's# \./#  #'` leaves **three** spaces between the hash and the filename where
+`sha256sum` requires exactly two, so the extra space is read as part of the filename. The
+bytes are fine. State the scope precisely: neither `README.md` nor `RELEASE_NOTES.md` prints
+a `sha256sum -c` command — `RELEASE_NOTES.md:66` says only "verify the archive against
+`SHA256SUMS.txt`" and `README.md` does not mention the file — so no document gives a wrong
+instruction. What is wrong is that the obvious way to follow the one instruction there is
+reports five `FAILED` lines on a perfectly good download. Normalizing works:
+`sed -E 's/^([0-9a-f]{64})[[:space:]]+/\1  /' SHA256SUMS.txt | sha256sum -c -`. Fixing the
+`sed` belongs to `.github/workflows/release.yml`, which is unauthorized, and a published
+release's asset cannot be corrected in place anyway — so this is a **v0.5.0 fix plus a
+release-note line**, not something to patch now.
+
+**The local `apps/desktop/src-tauri/target/release/runcove-desktop.exe` is `FileVersion
+0.3.0`, not 0.4.0.** It was built before the version bump landed and was never rebuilt, so
+it is not a v0.4.0 build and must not be used as one. Use the downloaded portable zip.
 
 The published release body was also diffed against `git show v0.4.0:RELEASE_NOTES.md` and
 matches apart from one trailing newline the API adds.
