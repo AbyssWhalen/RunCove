@@ -32,7 +32,12 @@ cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets
 
-cd apps/desktop
+cd apps/desktop/src-tauri
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets
+
+cd ..
 npm run lint
 npm run typecheck
 npm test -- --run
@@ -40,6 +45,11 @@ npm run build
 npm run e2e
 npm run tauri build
 ```
+
+`apps/desktop/src-tauri` is a separate Cargo package and not a member of a
+workspace, so the root `cargo` commands do not reach it. Both Rust blocks are
+required; running only the first one silently skips the desktop crate's tests,
+formatting, and lints.
 
 Focused frontend and Rust test commands may be used during development, but the
 full checks above are required before completion.
