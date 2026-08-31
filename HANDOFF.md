@@ -81,11 +81,17 @@ on 2026-08-31 and the decision below is the one that came back from actually loo
   the pair. Reopen this only with a plan that also rewrites the citations.
 
 **Still unauthorized, each needing its own ask:** any rewrite of published history (the
-`[codex]` marker in `bd2b777` and the two `[Qoder]` markers stay); any change to
-`.github/workflows/`; and deleting the four temporary working directories under `D:\tmp\`
-(`runcove-v030-demo`, `runcove-v030-release-verify-20260822-153954`, `runcove-v040-demo`,
-`runcove-v040-verify`, about 59 MB together) — they are this session's scratch space, not
-repository state, and nothing depends on them.
+`[codex]` marker in `bd2b777` and the two `[Qoder]` markers stay) and any change to
+`.github/workflows/`.
+
+**The scratch space is gone.** The four temporary working directories under `D:\tmp\` —
+`runcove-v030-demo`, `runcove-v030-release-verify-20260822-153954`, `runcove-v040-demo`,
+`runcove-v040-verify`, about 59 MB — were deleted on 2026-08-31 with the user's approval.
+They held the two isolated-identifier demo builds, v0.3.0's downloaded release archives, and
+this release's verification files; nothing in the repository depended on them, the isolated
+builds are reproducible, and the five checksums that mattered are written into `notes.md` so
+the verification is still re-checkable. So an older note that points at
+`D:\tmp\runcove-v030-demo\RunCove-demo.exe` is describing a file that no longer exists.
 
 ## 2026-08-31 Committed, Pushed, And Open As PR #4
 

@@ -64,6 +64,19 @@ decision worth keeping.
   what that proves and what it does not: the published bytes are what CI built and
   `SHA256SUMS.txt` describes them correctly; whether a downloader elsewhere receives those
   bytes is not something any check run from here could establish.
+- **The checksums themselves, recorded so the claim above can be re-checked without
+  trusting it.** These are the sums the workflow computed on the runner and published as
+  `SHA256SUMS.txt`, and they equal GitHub's stored-object digest for every asset. Re-verify
+  by downloading an archive and hashing it, or by reading `.assets[].digest` from
+  `gh api repos/AbyssWhalen/RunCove/releases/tags/v0.4.0`.
+
+  ```text
+  853d269b36d8065db4b173611a9a79b791b123487524509e9299be06243da96c  runcove-cli-linux-x86_64.tar.gz
+  fd4e23586fa922a4f54af0b529a58b5b702c081bd6b8f0c8c978add075c67ec4  runcove-cli-macos-aarch64.tar.gz
+  1691e2d03c020cd2424835396538236593a802ac61c6fec85319e4f4a604ecc7  runcove-cli-macos-x86_64.tar.gz
+  febb3c20847c0ab685b603eb642af8e00df7f91b1e516aec413321796dc3f73e  runcove-cli-windows-x86_64.zip
+  8707794802c3cf5c0563809376a22be2c24078d14ffd934334b125968fb4051f  runcove-desktop-windows-x86_64-portable.zip
+  ```
 - **The network to GitHub was unreliable all session and retrying was the right first
   move, not diagnosing.** Pushes failed with `Recv failure: Connection was reset` and
   `Failed to connect to github.com port 443` and then succeeded unchanged — one on the
