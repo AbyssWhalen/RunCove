@@ -1,5 +1,40 @@
 # RunCove Handoff
 
+## 2026-09-01 v0.4.1 Wrap-Up Complete
+
+**v0.4.1 is published, installed, verified, and wrapped up.** The user asked "看看还有没有
+其他问题，没有就先正式收尾了" after requesting the README simplification; all items are
+resolved:
+
+- **Release published**: run 33479967618, all seven jobs green, `sha256sum -c` verified on
+  real downloads.
+- **Size claim corrected**: 9% (13,212,672 → 11,978,752 bytes, CI-to-CI), not the "third"
+  first published. `RELEASE_NOTES.md`, `CHANGELOG.md`, `README.md`, `notes.md`, and the
+  published release notes were all corrected.
+- **README simplified**: 285 lines / 21,279 chars → 177 / 9,084 (57% fewer characters),
+  Chinese-first with a short English intro. All safety notices verified by grep; one
+  behavior note (startup auto-rescan) was restored after being caught missing.
+- **CI flake documented**: `cfcb260` failed on `manual_start_stays_starting_until_
+  managed_expected_port_is_ready` (docs-only commit, Windows desktop job), but `7963b9e`
+  (also docs-only) passed all five on the same runner. Recorded as environment-dependent;
+  deliberately not "fixed" by weakening the timing assertion.
+- **Temp files cleaned**: `v041-size-msg.txt`, `zipsize`, `zipsize2` removed; verification
+  downloads `runcove-v04{0,1}-dl` and extracted `v04{0,1}x` preserved as evidence.
+- **Published binary installed**: `%LOCALAPPDATA%\Programs\RunCove\RunCove.exe` is now the
+  11,978,752-byte v0.4.1 artifact, `FileVersion 0.4.1`, UI rendering confirmed. Previous
+  8,557,568-byte local build backed up as `RunCove.exe.v040local.bak`.
+- **User's database migrated successfully** `1 → 2 → 3` on 2026-09-01 at 13:56:52, all rows
+  survived. Backup untouched at version 1. v0.3.0 and earlier cannot open it.
+- **CI green**: `eb8e0c5` (flaky-test record) and `fe1b23e` (notes update) both passed;
+  `main` is at `fe1b23e`, three commits ahead of tag `v0.4.1` at `3f7be41` — all docs-only,
+  expected post-release divergence.
+
+All verification green locally: root 38 tests, desktop 253 passed / 1 ignored, frontend
+26 files / 211 tests, e2e 7, `build`, `tauri build`, fmt/clippy on both cargo packages.
+
+**Next session starts clean.** No outstanding defects, no pending decisions, no red lines
+crossed. Repository rules, safety boundaries, and testing policy unchanged.
+
 ## 2026-09-01 v0.4.1 Released
 
 **v0.4.1 is published, and the user delegated the decision to release it.** They had
