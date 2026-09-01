@@ -130,6 +130,29 @@ was written, measured against an existing test, and then withdrawn.
   The isolated-build pattern is the reusable part: patch the identifier *and* the mutex name,
   seed the isolated data directory with a copy, launch, then `git checkout --` the two files.
   It answers "does it work on the user's data" without ever opening the user's data.
+- **The launch-group feature had no test of its own happy path, and that gap survived the
+  release.** Asked whether v0.4.0 could be called stable, the honest answer required checking
+  rather than recalling — and the check found that of the three group tests in `commands.rs`,
+  one injects a closure, one exercises the empty-group refusal, and one exercises a port
+  conflict. The e2e suite drives `mock-data.ts`. The isolated launch above booted the binary
+  but clicked nothing. So **"press Start and the stack comes up" had never been executed by
+  anything**, in a release whose single headline feature is launch groups.
+
+  `a_whole_group_starts_real_processes_in_order_and_stops_them_together` closes it: two real
+  `node.exe` members, each binding its own expected port, asserted on launch order, both
+  processes running, a second start reusing the same PIDs, and a reverse-order stop that
+  leaves nothing behind.
+
+  **The port assertions are the load-bearing part, and the reason is worth keeping.** Reading
+  `processes.info` alone would pass on a walk that never waited for readiness — `info` is
+  populated at spawn, not at readiness. Refusing a fresh `TcpListener::bind` on *both* ports
+  after the walk returns is what makes the ordering promise observable, because it can only
+  hold if every member is still up when the last one finishes. Mutation-checked by walking the
+  stop forward instead of in reverse.
+
+  The general lesson, since this is the second time this shape has come up: a feature can have
+  several tests and still have none on the path a user takes. Count the paths, not the tests.
+  Both times the missing one was the happy path, because failure paths are easier to write.
 
 ## 2026-08-31 P3 Housekeeping Disposition
 

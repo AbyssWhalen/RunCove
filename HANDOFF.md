@@ -180,6 +180,23 @@ This is also the first evidence in this project that the built application *star
 other check is a test. Keep the distinction when citing it: the tests prove the units, the
 isolated launch proves the binary boots and migrates.
 
+**A test gap found the same day, and it was in the release's headline feature.** Nothing
+covered a launch group actually starting real processes. The three group tests in
+`commands.rs` inject a closure, refuse an empty group, and report a port conflict; the e2e
+suite drives `mock-data.ts`; the isolated launch clicked nothing. So the path a user takes —
+press Start, the stack comes up in order — had never been executed by any automated check in
+a release whose one feature is launch groups.
+`a_whole_group_starts_real_processes_in_order_and_stops_them_together` (`commands.rs`, Windows
+only, spawns `node.exe`) now covers it, and the desktop crate is **253** tests as a result, so
+a document citing 252 predates it.
+
+Read the assertion set before changing it: checking `processes.info` alone would pass on a
+walk that never waited for readiness, because `info` is populated at spawn. The test instead
+asserts a fresh `TcpListener::bind` is refused on *both* members' ports after the walk
+returns, which can only hold if every member is still up when the last one finishes. It also
+pins that a second start reuses the same PIDs, which is what makes the button safe to press
+twice. Mutation-checked: walking the stop forward instead of in reverse fails it.
+
 **What that measurement also settled: there is almost nothing at risk.** The real database
 holds 0 projects, 0 launch profiles, 0 expected ports, 0 port associations, 0 restore-set
 rows, 4 run sessions, and 2 settings rows, and was last written on 2026-08-11. Both survived
