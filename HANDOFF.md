@@ -47,6 +47,11 @@ separate file and `strip` has almost nothing to take out of the exe — so the w
 `lto` and `codegen-units = 1`, visible as cargo-registry path literals halving from 368
 to 186. The profile is still worth keeping; it is simply worth 9% here, not 67%.
 
+**`main` is one commit ahead of the tag on purpose.** `v0.4.1` is at `3f7be41`, which
+the artifacts were built from; the size correction above landed afterwards as a
+docs-only commit. A published tag does not move, and unlike v0.4.0's situation no
+shipped code differs between them.
+
 Three findings from reading the shipping code, recorded because they are properties
 rather than changes:
 
