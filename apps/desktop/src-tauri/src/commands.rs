@@ -2444,6 +2444,141 @@ setInterval(() => {}, 1000);
         assert!(state.storage.launch_group(&group.id).unwrap().is_some());
     }
 
+    /// The one path nothing else covered: a whole group starting **real** processes, in
+    /// order, each waited for on its own expected port, then stopped as one unit. The other
+    /// group tests inject closures or exercise failure paths, and the e2e suite drives a
+    /// mocked backend, so "press Start and the stack comes up" had never actually been run.
+    #[cfg(windows)]
+    #[test]
+    fn a_whole_group_starts_real_processes_in_order_and_stops_them_together() {
+        let temp = tempfile::tempdir().unwrap();
+        // Each member binds its own port and holds it, so readiness is observable rather
+        // than assumed, and the ports prove which members were up at the same time.
+        std::fs::write(
+            temp.path().join("serve.js"),
+            r#"
+const net = require('net');
+const server = net.createServer();
+server.listen(Number(process.argv[2]), '127.0.0.1');
+setInterval(() => {}, 1000);
+"#,
+        )
+        .unwrap();
+        let first_port = unused_port();
+        let second_port = unused_port();
+        let cwd = temp.path().to_string_lossy().into_owned();
+        let member = |name: &str, port: u16| LaunchProfileInput {
+            id: None,
+            name: name.into(),
+            program: "node.exe".into(),
+            args: vec!["serve.js".into(), port.to_string()],
+            cwd: cwd.clone(),
+            expected_ports: vec![ExpectedPortInput {
+                id: None,
+                port,
+                protocol: "tcp".into(),
+            }],
+        };
+
+        let storage = Arc::new(Storage::open(&temp.path().join("real-group.sqlite3")).unwrap());
+        let project = storage
+            .save_project(ProjectInput {
+                id: None,
+                name: "Stack".into(),
+                path: cwd.clone(),
+                profiles: vec![member("api", first_port), member("web", second_port)],
+            })
+            .unwrap();
+        let group = storage
+            .save_launch_group(LaunchGroupInput {
+                id: None,
+                name: "Whole stack".into(),
+                profile_ids: vec![
+                    project.profiles[0].id.clone(),
+                    project.profiles[1].id.clone(),
+                ],
+            })
+            .unwrap();
+
+        let app = tauri::test::mock_app();
+        app.manage(AppState {
+            storage,
+            processes: Arc::new(ProcessManager::new(100)),
+        });
+        let state = app.state::<AppState>();
+
+        let started = start_launch_group_inner(&group.id, app.handle(), &state).unwrap();
+        assert_eq!(started.group_id, group.id);
+        assert_eq!(
+            started.failed_profile_id, None,
+            "error: {:?}",
+            started.error
+        );
+        assert_eq!(
+            started.started_profile_ids,
+            vec![
+                project.profiles[0].id.clone(),
+                project.profiles[1].id.clone()
+            ],
+            "members must be reported in launch order"
+        );
+        for profile in &project.profiles {
+            assert!(
+                state.processes.info(&profile.id).is_some(),
+                "{} is not running after a group start",
+                profile.name
+            );
+        }
+        // Both ports refuse a fresh bind, which is the group's promise made observable:
+        // every member is still up once the walk returns, not just the last one.
+        for port in [first_port, second_port] {
+            assert!(
+                std::net::TcpListener::bind(("127.0.0.1", port)).is_err(),
+                "port {port} is not held after a group start"
+            );
+        }
+
+        // Starting again must be a no-op rather than a second set of processes, which is
+        // what makes the button safe to press twice.
+        let pids: Vec<u32> = project
+            .profiles
+            .iter()
+            .map(|p| state.processes.info(&p.id).unwrap().pid)
+            .collect();
+        let again = start_launch_group_inner(&group.id, app.handle(), &state).unwrap();
+        assert_eq!(again.failed_profile_id, None);
+        assert_eq!(again.started_profile_ids.len(), 2);
+        let pids_again: Vec<u32> = project
+            .profiles
+            .iter()
+            .map(|p| state.processes.info(&p.id).unwrap().pid)
+            .collect();
+        assert_eq!(pids, pids_again, "a second start replaced the processes");
+
+        let stopped = stop_launch_group_inner(&group.id, app.handle(), &state).unwrap();
+        assert_eq!(stopped.group_id, group.id);
+        assert!(
+            stopped.failures.is_empty(),
+            "failures: {:?}",
+            stopped.failures
+        );
+        assert_eq!(
+            stopped.stopped_profile_ids,
+            vec![
+                project.profiles[1].id.clone(),
+                project.profiles[0].id.clone()
+            ],
+            "stop must walk the group in reverse"
+        );
+        for profile in &project.profiles {
+            assert!(
+                state.processes.info(&profile.id).is_none(),
+                "{} still running after a group stop",
+                profile.name
+            );
+        }
+    }
+
     #[cfg(windows)]
     #[test]
     fn a_group_start_reports_its_own_id_with_the_member_that_failed_and_its_port() {
