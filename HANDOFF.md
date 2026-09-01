@@ -30,6 +30,22 @@ release page carries v0.4.1's own notes, and the desktop exe inside the zip repo
 it has before on this machine; a plain retry completed it, and the CLI archives all
 matched their release metadata on the first try.
 
+**One environment-dependent test failure appeared on CI after release.** Commit `cfcb260`
+(docs-only README simplification) failed on `windows-latest` CI while all three CLI jobs
+and Rust lint passed: `commands::tests::manual_start_stays_starting_until_managed_expected_port_is_ready`
+asserted at `commands.rs:2759` that the port was not yet connectable while status was
+`Starting`, but `TcpStream::connect` succeeded. The same test passed locally every time.
+Commit `7963b9e` (also docs-only, restoring the startup-rescan note) passed all five jobs
+including Windows desktop — run 33491389051, all green — so the failure is not repeatable
+across consecutive docs-only commits on the same runner. This matches the documented
+precedent: `external_termination_with_verified_identity_stops_tree_and_releases_port`
+failed with "Access denied" on a reviewer's machine in 2026-08-18 while passing locally,
+and was recorded as environment-dependent rather than "fixed" by weakening an assertion.
+The repo forbids that. `manual_start_stays_starting_until_managed_expected_port_is_ready`
+tests the observable contract — that status stays `Starting` until the managed port is
+listening and owned by the profile's tree — and that contract holds in every local run
+and in CI run 33491389051. Recorded as flaky on CI Windows runners, not a regression.
+
 **The size claim in the first published notes was wrong, and it was corrected after
 publication.** They said the download was "about a third smaller — roughly 8.6 MB against
 13 MB". The measured truth, builder-to-builder, is 13,212,672 → 11,978,752 bytes: 9%
