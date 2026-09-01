@@ -155,11 +155,18 @@ was written, measured against an existing test, and then withdrawn.
   Both times the missing one was the happy path, because failure paths are easier to write.
 - **The desktop executable was the one shipped binary built without the project's release
   settings, and a size measurement is what exposed it.** Installing the app locally put a
-  25,912,797-byte exe next to the 13,212,672-byte one published with v0.4.0. A 1.96x gap
-  between the same source at the same version is not explainable by build noise, so it was
-  worth chasing rather than shrugging at.
+  25,912,797-byte exe next to the 13,212,672-byte one published with v0.4.0. A gap that size
+  between the same source at the same version is not build noise, so it was worth chasing
+  rather than shrugging at.
 
-  The cause is a structural assumption that was never true here. The root `Cargo.toml` carries
+  **The chase found a real defect, but not the one that explains the trigger** — keep those
+  two apart, because collapsing them is the easy mistake. What the size difference prompted
+  was a look at the build configuration; what the look found was that the desktop package
+  never received the release profile at all. That is a genuine defect worth fixing on its own
+  terms, and it is *not* an account of why one profile-less build was 25.9 MB and another was
+  13.2 MB. That second question is still open, further down.
+
+  The defect is a structural assumption that was never true here. The root `Cargo.toml` carries
   `[profile.release] strip = true, lto = true, codegen-units = 1`, and profile settings apply
   to a whole workspace — but **the root manifest has no `[workspace]` section**, so
   `apps/desktop/src-tauri` is an unrelated package rather than a member. When cargo's build
