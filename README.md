@@ -36,7 +36,8 @@ sha256sum -c SHA256SUMS.txt   # 只下了其中一个文件时加 --ignore-missi
 - 每两秒刷新 TCP/UDP 监听状态，在 Windows 允许时显示占用进程的 PID 与详情，并把活跃监听
   和已注册但当前空闲的项目端口合并展示
 - 从选定项目或开发根目录发现 npm / pnpm 启动候选，支持 `package.json` workspaces 与
-  `pnpm-workspace.yaml`。候选一律需要你确认后才注册，不会自动写入
+  `pnpm-workspace.yaml`。最后一次成功扫描的开发根目录会在下次启动时自动重扫一次，但候选
+  一律需要你确认后才注册，不会自动写入
 - 启动配置以 `program` / `args[]` / `cwd` 分开存储，可选期望端口，启动前检测端口冲突
 - 启动 / 停止 / 重启，打开目录或浏览器。受管进程树放进 Job Object，停止时一并回收子进程
 - 会话日志保存在有上限的内存缓冲里，可过滤、复制、清空
