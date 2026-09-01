@@ -2,17 +2,24 @@
 
 > Local dev services, under control.
 
-RunCove v0.4.0 is a Windows-first desktop control center for local development services. It combines live port inspection with a trusted project registry, structured launch profiles, process-tree control, session logs, named launch groups, and on-demand restoration of the projects that were running before the app exited.
+RunCove v0.4.1 is a Windows-first desktop control center for local development services. It combines live port inspection with a trusted project registry, structured launch profiles, process-tree control, session logs, named launch groups, and on-demand restoration of the projects that were running before the app exited.
 
 The distribution also includes the cross-platform `runcove` port-inspection CLI. The desktop application is Windows-first; the CLI is available on Windows, macOS, and Linux.
 
-The v0.4.0 release is distributed as a portable Windows x64 zip from the [RunCove Releases page](https://github.com/AbyssWhalen/RunCove/releases). The original v0.1.0 CLI release remains available in the release history for existing installations.
+The v0.4.1 release is distributed as a portable Windows x64 zip from the [RunCove Releases page](https://github.com/AbyssWhalen/RunCove/releases). The original v0.1.0 CLI release remains available in the release history for existing installations.
 
 ## Current Release / 当前版本
 
-RunCove v0.4.0 adds named launch groups while preserving the local-only and
-process-safety boundaries. / RunCove v0.4.0 新增具名启动组，同时保持本地运行与
-进程安全边界不变。
+RunCove v0.4.1 is a fix release for v0.4.0. It changes no features, reads the same
+schema version 3 database, and cuts the download by about a third. Two starts that
+share a launch profile now wait for each other instead of failing, and
+`SHA256SUMS.txt` passes `sha256sum -c`. See [CHANGELOG.md](CHANGELOG.md).
+/ RunCove v0.4.1 是 v0.4.0 的修复版：功能不变，数据库仍是 schema 版本 3，下载体积
+约减少三分之一。共享同一启动配置的两次启动现在会互相等待而不再失败，
+`SHA256SUMS.txt` 也能通过 `sha256sum -c` 校验。
+
+The headline feature remains v0.4.0's named launch groups, described below.
+/ 主要功能仍是 v0.4.0 引入的具名启动组，说明如下。
 
 - **Named and ordered / 具名有序:** A group is a named set of launch profiles in
   the order you choose, and you can keep as many groups as you need. / 一个组是
@@ -39,11 +46,11 @@ process-safety boundaries. / RunCove v0.4.0 新增具名启动组，同时保持
 
 ## Download And Run
 
-1. Download the RunCove v0.4.0 Windows x64 portable zip from the [Releases page](https://github.com/AbyssWhalen/RunCove/releases).
+1. Download the RunCove v0.4.1 Windows x64 portable zip from the [Releases page](https://github.com/AbyssWhalen/RunCove/releases).
 2. Extract the zip to a directory you control.
 3. Run `runcove-desktop.exe`.
 
-RunCove v0.4.0 is portable and does not include an installer. The executable is currently unsigned, so Windows SmartScreen may show an unknown-publisher warning; verify that the archive came from this repository's release before choosing to run it. RunCove uses the Microsoft Edge WebView2 Runtime, which is included with current Windows 11 installations and can be installed separately on older or stripped-down systems.
+RunCove v0.4.1 is portable and does not include an installer. The executable is currently unsigned, so Windows SmartScreen may show an unknown-publisher warning; verify that the archive came from this repository's release before choosing to run it. RunCove uses the Microsoft Edge WebView2 Runtime, which is included with current Windows 11 installations and can be installed separately on older or stripped-down systems.
 
 ## Desktop App
 
@@ -107,8 +114,8 @@ and there can be as many as you keep.
   interrupting a stop would only leave more processes running.
 - Two groups may share a member, and both can be started at once. The second one to
   reach the shared profile waits for it rather than failing, then carries on, so each
-  group's order still holds. The same applies between a group and a restore. *(Landed
-  after v0.4.0; not in the published v0.4.0 build.)*
+  group's order still holds. The same applies between a group and a restore. *(Fixed in
+  v0.4.1; the published v0.4.0 build fails the second start instead.)*
 - Each group shows its startup order and whether it is fully running, partly running,
   or not running. That status is derived from the members' live status; RunCove stores
   no separate group state.
@@ -153,7 +160,7 @@ Build the release executable from the same directory:
 npm run tauri build
 ```
 
-Tauri bundling is disabled because the public v0.4.0 artifact is a Windows x64 portable zip rather than an installer. The release executable is written below `apps/desktop/src-tauri/target/` and then packaged with the release documentation.
+Tauri bundling is disabled because the public v0.4.1 artifact is a Windows x64 portable zip rather than an installer. The release executable is written below `apps/desktop/src-tauri/target/` and then packaged with the release documentation.
 
 ### CLI
 
@@ -209,7 +216,7 @@ The desktop database is created in RunCove's application-local data directory an
 
 A build opens a database at its own schema version or older and refuses one that is newer, so this is a one-way step: after v0.3.0 has upgraded a database to schema version 2, v0.2.1 reports that version as newer than it supports and will not open it. Keep a copy of the data directory before first launching v0.3.0 if you may need to return to v0.2.1.
 
-v0.4.0 adds schema version 3 for launch groups the same way. Each upgrade runs in one transaction and stays at the previous version if it fails, but a successful one cannot be undone: once a version 3 database exists, v0.3.0 and every earlier build refuse it as newer than they support. **Back up RunCove's application-local data directory before running v0.4.0 for the first time** if you may need to return to v0.3.0.
+v0.4.0 adds schema version 3 for launch groups the same way. Each upgrade runs in one transaction and stays at the previous version if it fails, but a successful one cannot be undone: once a version 3 database exists, v0.3.0 and every earlier build refuse it as newer than they support. **Back up RunCove's application-local data directory before first running v0.4.0 or v0.4.1** if you may need to return to v0.3.0. v0.4.1 introduces no schema change of its own, so upgrading from v0.4.0 migrates nothing and needs no backup.
 
 Port ownership follows a deliberate trust order:
 

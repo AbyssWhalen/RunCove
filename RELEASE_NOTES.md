@@ -1,49 +1,47 @@
-# RunCove v0.4.0
+# RunCove v0.4.1
 
-RunCove v0.4.0 adds launch groups. A group is a named, ordered set of launch
-profiles that starts or stops as one unit, so the set of services you bring up
-every morning becomes one button instead of several.
-
-## Highlights
-
-- Create as many groups as you need, each with its own name and startup order.
-  Members may come from different projects, so one group can bring up a
-  database, an API, and a web front end together.
-- Whole-group start walks the members in the order you set and waits for each
-  one's expected port before moving on, exactly as a single-profile start does.
-  A member that is already running counts as started, so pressing Start again
-  only fills in what is missing.
-- A failed start stops before the next member and keeps everything that already
-  started. The message names the member it stopped at, says how many started
-  before it, and offers the same **View occupant** action as a single-profile
-  port conflict.
-- Whole-group stop walks the members in reverse, and a member it cannot stop
-  does not stop the rest. The report counts every failure and names the first.
-- Each group shows its startup order and whether it is fully running, partly
-  running, or not running. Deleting a launch profile removes it from every group
-  that used it.
+RunCove v0.4.1 is a fix release for v0.4.0. It changes no features and needs no
+database migration: if you are already on v0.4.0, this is a drop-in replacement,
+and the download is about a third smaller.
 
 ## Fixed
 
-- Process stop and exit messages now follow the interface language. A Simplified
-  Chinese interface no longer shows English sentences such as `Stopped by user`
-  in the status toast or the log drawer.
-- Fields in the project editor keep their own names once validation errors
-  appear, so a screen reader no longer announces `Program This field is
-  required.` as a field's name.
-- Saving an existing project records the time it was saved rather than the time
-  it was first added.
+- **Two ordered starts that share a profile no longer fail each other.** Starting
+  two launch groups that both contain the same database, or starting a group while
+  a restore is bringing the same profiles back, used to fail whichever arrived
+  second with an "already starting" message the user had done nothing to cause.
+  Each one now waits for the shared profile to settle and carries on, so the
+  startup order every group promises still holds and a profile the other one
+  already brought up simply counts as started.
+- **`SHA256SUMS.txt` now passes `sha256sum -c`.** The v0.4.0 file put three spaces
+  between each hash and its filename where the format allows exactly two, so every
+  line failed to open on a byte-perfect download. The workflow now writes the
+  accepted format and verifies the file before publishing, in the same job that
+  writes it.
+- **A failed restore names the profile it stopped at** as `Project / Profile`
+  rather than printing an internal id, which is what a whole-group failure has
+  always done.
+- **A restore and a whole-group start are no longer offered at the same time.**
+  Waiting makes overlapping them correct, but the second would only sit and wait
+  for work already underway, so the button that starts it is disabled while the
+  first runs.
+- **The desktop download is about a third smaller** — roughly 8.6 MB against 13 MB.
+  The project's release build settings had never reached the desktop application:
+  they were written once at the repository root, and the desktop app is a separate
+  Cargo package rather than a workspace member, so it was the only shipped binary
+  built without them. Nothing about how RunCove behaves changes.
 
 ## Upgrade Note
 
-The desktop database migrates to schema version 3 on first launch to store
-launch groups — from version 2 if you are coming from v0.3.0, and through
-version 2 if you are coming from an older release. Each migration runs in one
-transaction and stays at the previous version if it fails, but a successful
-upgrade has no downgrade path: **v0.3.0 and earlier cannot open the resulting
-version 3 database.** Copy `runcove.sqlite3` out of RunCove's application-data
-directory (`%LOCALAPPDATA%\com.abysswhale.runcove\`) before launching v0.4.0 if
-you may need to return to an earlier version.
+**No migration runs and no backup is needed if you are coming from v0.4.0.** This
+release reads the same schema version 3 database.
+
+Coming from v0.3.0 or earlier, the migration described in v0.4.0's notes still
+applies: the database upgrades to schema version 3 on first launch, each step runs
+in one transaction and stays at the previous version if it fails, and a successful
+upgrade has no downgrade path — **v0.3.0 and earlier cannot open a version 3
+database.** Copy `runcove.sqlite3` out of `%LOCALAPPDATA%\com.abysswhale.runcove\`
+first if you may need to go back.
 
 ## Known Limitations
 
@@ -52,6 +50,10 @@ you may need to return to an earlier version.
 - In the rare case that a run log archive's final buffered flush fails, the
   archive line count can over-report which buffered line reached disk. The byte
   count is measured from the file, and normal writes are unaffected.
+- The `SHA256SUMS.txt` published with **v0.4.0** still has the formatting defect
+  above; it cannot be changed after the fact. Verify that older release with
+  `sed -E 's/^([0-9a-f]{64})[[:space:]]+/\1  /' SHA256SUMS.txt | sha256sum -c -`.
+  This release's file needs no workaround.
 
 ## Downloads
 
@@ -80,7 +82,4 @@ sha256sum -c SHA256SUMS.txt
 
 `SHA256SUMS.txt` lists every archive in the release, so if you downloaded only one,
 add `--ignore-missing` — a plain `-c` counts the archives you did not download as
-failures. The v0.4.0 file has a formatting defect that makes `-c` report
-`No such file or directory` for every line even when all five archives are present;
-the checksums themselves are correct. See the v0.4.0 entry in `CHANGELOG.md` for the
-one-line workaround.
+failures.

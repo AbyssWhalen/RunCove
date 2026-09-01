@@ -1,6 +1,6 @@
 [package]
 name = "runcove-desktop"
-version = "0.4.0"
+version = "0.4.1"
 description = "RunCove Windows desktop application"
 authors = ["RunCove contributors"]
 edition = "2021"

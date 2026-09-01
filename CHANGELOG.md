@@ -4,6 +4,11 @@ All notable user-facing changes to RunCove are documented in this file.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-01
+
+A fix release for v0.4.0. No feature changes, and no migration: v0.4.1 reads the
+same schema version 3 database, so upgrading from v0.4.0 needs no backup.
+
 ### Fixed
 
 - Two things that start launch profiles in order — a restore and a whole-group
@@ -25,12 +30,11 @@ All notable user-facing changes to RunCove are documented in this file.
   checks it before publishing. See the known limitation below for what to do about
   the file already published with v0.4.0.
 - The desktop executable is built with the release settings the project already
-  meant to apply to it, which cuts it from roughly 26 MB to 8.6 MB — smaller than
-  the 13 MB published with v0.4.0. The settings had been written once at the
-  repository root, but the desktop application is a separate Cargo package rather
-  than a workspace member, so it never received them and was the only shipped
-  binary built without them. Nothing about how RunCove behaves changes; the
-  download is simply smaller.
+  meant to apply to it, so the download drops from about 13 MB to 8.6 MB. The
+  settings had been written once at the repository root, but the desktop
+  application is a separate Cargo package rather than a workspace member, so it
+  never received them and was the only shipped binary built without them. Nothing
+  about how RunCove behaves changes; the download is simply smaller.
 
 ### Known Limitations
 
