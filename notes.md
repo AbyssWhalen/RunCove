@@ -173,8 +173,32 @@ was written, measured against an existing test, and then withdrawn.
   why it is duplicated, so the next reader does not "clean up" the duplication. Creating a
   real workspace would remove the duplication instead, and was rejected for this change: it
   moves both packages' target directories and lockfiles and touches the release workflow, all
-  to tidy six lines. The exe is now **8,557,568 bytes** — 0.33x the unstripped local build and
-  0.65x the published v0.4.0.
+  to tidy six lines. The exe is now **8,557,568 bytes** — 0.33x the local build before the
+  change and 0.65x the published v0.4.0.
+
+  **The published artifact was checked directly rather than inferred from the local size.**
+  `/tmp/zipx/runcove-desktop.exe`, extracted from the v0.4.0 download, holds one
+  `runcove_desktop.pdb` reference and 632 source-path strings; the new build holds zero PDB
+  references and 288. A `strip` removes the debug directory that names the PDB, so that pair
+  of readings is the evidence the shipped binary was built without it.
+
+  Two corrections to the obvious reading of those numbers, both of which the first write-up
+  got wrong. First, **most of the shrink is LTO, not `strip`**: the release profile defaults
+  to `debug = false`, so there was little debuginfo to remove, and `lto = true` with
+  `codegen-units = 1` did the bulk of the work. Attributing 17 MB to `strip` would send the
+  next reader looking in the wrong place. Second, 288 source paths survive in the stripped
+  build because panic messages embed `file!()` as ordinary `.rdata` string data — `strip`
+  takes the symbol table and debug directory, not string literals, so do not describe it as
+  removing path traces.
+
+  **One thing is measured and unexplained, and is left that way on purpose.** The local build
+  before the change was 25,912,797 bytes while CI's published build was 13,212,672, and
+  neither had the profile. Nothing found accounts for a 1.96x gap between them: no
+  `RUSTFLAGS`, no `.cargo/config.toml` build overrides in the repository, and the only global
+  cargo config sets a registry mirror. The pre-change binary has been overwritten, so the
+  question is no longer testable here. It does not affect the fix — the shipped binary
+  demonstrably lacked the settings and demonstrably works with them — but a guess written
+  down as a cause would be worse than the gap.
 
   The build-time cost was overstated on first measurement and the correction is the useful
   part. The build right after the change took 3m22s, which invited "LTO doubles the build" —

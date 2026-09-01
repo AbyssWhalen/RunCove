@@ -237,8 +237,14 @@ The backup is at `%LOCALAPPDATA%\RunCove-backup-v0.3.0-2026-08-31\runcove.sqlite
 
 **The desktop executable had been missing the project's release settings, and it is the
 artifact users download.** Installing it is what surfaced this: the local exe was 25,912,797
-bytes against the 13,212,672 published with v0.4.0, and a 1.96x gap at the same version is
-not build noise. The root `Cargo.toml` carries `[profile.release] strip / lto /
+bytes against the 13,212,672 published with v0.4.0, and a gap that size at the same version
+was worth chasing. The published binary was then checked directly — it carries a
+`runcove_desktop.pdb` reference and 632 source-path strings where the new build carries zero
+and 288, and a `strip` is what removes the debug directory naming that PDB. Note that **most
+of the size reduction is LTO rather than `strip`**, since the release profile already
+defaults to `debug = false`; and the 1.96x gap between the two builds that *both* lacked the
+profile is measured but unexplained, with the pre-change binary overwritten and so no longer
+testable. `notes.md` keeps that open rather than guessing. The root `Cargo.toml` carries `[profile.release] strip / lto /
 codegen-units`, but it has **no `[workspace]` section**, so `apps/desktop/src-tauri` is an
 unrelated package and cargo never reads the root profile when that manifest is the build
 root. The CLI binaries got strip and LTO; the desktop application got neither. Fixed by
