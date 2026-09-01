@@ -105,6 +105,10 @@ and there can be as many as you keep.
 - Whole-group stop walks the members in reverse. A member that cannot be stopped does
   not stop the rest: the report counts every failure and names the first one, because
   interrupting a stop would only leave more processes running.
+- Two groups may share a member, and both can be started at once. The second one to
+  reach the shared profile waits for it rather than failing, then carries on, so each
+  group's order still holds. The same applies between a group and a restore. *(Landed
+  after v0.4.0; not in the published v0.4.0 build.)*
 - Each group shows its startup order and whether it is fully running, partly running,
   or not running. That status is derived from the members' live status; RunCove stores
   no separate group state.
