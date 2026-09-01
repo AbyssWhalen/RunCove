@@ -24,6 +24,13 @@ All notable user-facing changes to RunCove are documented in this file.
 - The release workflow writes a `SHA256SUMS.txt` that `sha256sum -c` accepts, and
   checks it before publishing. See the known limitation below for what to do about
   the file already published with v0.4.0.
+- The desktop executable is built with the release settings the project already
+  meant to apply to it, which cuts it from roughly 26 MB to 8.6 MB — smaller than
+  the 13 MB published with v0.4.0. The settings had been written once at the
+  repository root, but the desktop application is a separate Cargo package rather
+  than a workspace member, so it never received them and was the only shipped
+  binary built without them. Nothing about how RunCove behaves changes; the
+  download is simply smaller.
 
 ### Known Limitations
 

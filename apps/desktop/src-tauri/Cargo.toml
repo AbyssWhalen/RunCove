@@ -42,3 +42,14 @@ windows = { version = "0.58", features = [
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }
 tempfile = "3"
+
+# The same release profile the root package has carried since the CLI shipped. It has to be
+# repeated here rather than inherited: this crate is a separate package, not a member of a
+# workspace rooted at the repository, so `[profile.release]` in the root `Cargo.toml` is
+# ignored when cargo's build root is this manifest. Without this block the desktop
+# executable — the artifact users actually download — was the only shipped binary built
+# unstripped and without LTO, which is not what writing those settings once was meant to do.
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
