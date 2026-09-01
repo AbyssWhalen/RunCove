@@ -155,6 +155,24 @@ build against the real database is the intended next step rather than something 
 Prefer the published portable zip over that local build, since the zip is the artifact
 users get. Nothing here has launched either one.
 
+**That migration was rehearsed on 2026-09-01 against a copy of the real database, and it
+succeeded.** The live file was copied (the original opened read-only, never written) to
+`D:\tmp\migration-check\runcove.sqlite3` and handed to `Storage::open` — the exact call
+`lib.rs:240` makes at startup — through a temporary test in `storage.rs` that was deleted
+afterwards, leaving that file byte-identical to its committed state. Result: the copy went
+`user_version` 1 → 3, all three tables the two migrations add (`run_log_archives`,
+`launch_groups`, `launch_group_members`) exist, and `settings()`, `list_projects()`,
+`list_launch_groups()`, and `list_sessions()` all read back cleanly. The live file was
+re-checked afterwards and is still at `user_version = 1`.
+
+**What that measurement also settled: there is almost nothing at risk.** The real database
+holds 0 projects, 0 launch profiles, 0 expected ports, 0 port associations, 0 restore-set
+rows, 4 run sessions, and 2 settings rows, and was last written on 2026-08-11. Both survived
+the rehearsal intact. So the irreversibility is real and the tag-vs-build asymmetry still
+matters, but "irreversible migration of the user's data" should not be described as risky
+here — say instead that it is irreversible, was rehearsed successfully on a copy, and has
+essentially no user data to lose. The backup stays regardless.
+
 **P3 is closed, and only one half of it was carried out.** The user authorized both halves
 on 2026-08-31 and the decision below is the one that came back from actually looking:
 

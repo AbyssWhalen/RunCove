@@ -95,6 +95,23 @@ was written, measured against an existing test, and then withdrawn.
   only; and no `TODO`, `FIXME`, or `todo!` remains in any production source file.
 - **Every new test was checked against a reverted fix, not just for passing.** Each fails
   without its guard and passes with it. A test that is green either way pins nothing.
+- **The one step reserved for the user was rehearsed on a copy, and the rehearsal changed
+  what should be said about it.** The `1 → 2 → 3` migration of the real database was the
+  outstanding risk, so the live file was copied and the copy handed to `Storage::open` —
+  the exact call `lib.rs:240` makes at startup, reached through a temporary test in
+  `storage.rs` that was deleted afterwards. The copy migrated to `user_version = 3` with all
+  three added tables present and every reader (`settings`, `list_projects`,
+  `list_launch_groups`, `list_sessions`) working; the live file was re-read afterwards and is
+  still at 1.
+
+  Rehearsing on a copy rather than reasoning about it is the point: the migration tests use
+  synthetic fixtures, and a fixture cannot tell you whether *this* file migrates. What it
+  found is that the live database holds 0 projects, 0 profiles, 0 associations, 4 run
+  sessions, and 2 settings rows, last written 2026-08-11. So the honest description is
+  "irreversible, rehearsed successfully, with essentially no user data at stake" — not
+  "risky". The earlier framing was accurate about irreversibility and silent about volume,
+  which made it read as more dangerous than it is. The backup stays anyway, because the
+  argument for it never depended on the row count.
 
 ## 2026-08-31 P3 Housekeeping Disposition
 
