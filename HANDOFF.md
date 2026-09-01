@@ -4,32 +4,74 @@
 
 **`main` carries unreleased fixes on top of the `v0.4.0` tag.** The release itself is
 unchanged — the section below still describes it — but a review pass after publication
-found and fixed a concurrency defect, so the tag and `main` no longer have identical
-behavior. `CHANGELOG.md` has an `[Unreleased]` section; `notes.md` has the reasoning.
+found and fixed a concurrency defect and a release-workflow defect, so the tag and `main`
+no longer have identical behavior. `CHANGELOG.md` has an `[Unreleased]` section; `notes.md`
+has the reasoning. The four version manifests stay at `0.4.0` deliberately: a version
+number means something only at an actual release, and that needs the user's word.
 
-What changed, all frontend:
+**The overlap defect is fixed in the backend, which is where it belonged.** Two things
+start launch profiles in order — `restore_last_run_set_inner` and
+`start_launch_group_inner` — and both walk `restore_profiles` taking a per-profile
+reservation. Overlapping membership is legitimate (a restore set is whatever ran last; two
+groups may share a database), so the second walk used to fail on the shared profile.
 
-- A restore and a whole-group action can no longer overlap, in either direction. Fixed at
-  both the latch (`App.tsx`, `restoreLastRunSet` now also refuses while
+- `ProcessManager::try_reserve` (`processes.rs:325`) returns `Ok(None)` for a profile
+  another operation holds and still `Err` for a shutdown. It exists because `AppError`
+  carries no discriminator, so the alternative was matching on message text. `reserve` is
+  now expressed through it, so every existing caller and the error string are unchanged.
+- `reserve_walk_member` (`commands.rs:419`) polls it to the `RESERVATION_HANDOFF_TIMEOUT`
+  deadline, and `start_walk_member` (`commands.rs:402`) then takes the ordinary start path.
+  **Both walks call it** — a restore and a group behave identically for the identical
+  situation, which is the point. A shutdown is returned at once rather than waited out.
+- The handoff timeout is derived as `PROFILE_READY_TIMEOUT_SECS + 5`, not written as its own
+  number: the operation being waited on may spend its whole readiness budget, so a waiter
+  with an equal budget could report a failure for a start that had not failed.
+- Whole-group stop got the same treatment, plus a second `processes.info` check after the
+  wait, because the operation it waited out may have been the stop that member needed.
+  `stop_profile_inner_reserved` (`commands.rs:300`) was split out for it, mirroring the
+  `start_profile_inner` / `start_profile_inner_reserved` pair that already existed.
+- Four timeout literals became named constants (`PROFILE_READY_TIMEOUT`,
+  `PROFILE_STOP_TIMEOUT`, `STATE_POLL_INTERVAL`). `stop_all_and_wait`'s 8 seconds was left
+  a literal on purpose: it is a total budget for every tree at once, not a per-profile one,
+  so naming it with `PROFILE_STOP_TIMEOUT` would be wrong.
+
+Two Rust tests cover it: `try_reserve_separates_a_held_profile_from_a_refusal`
+(`processes.rs`) and `a_walk_member_another_operation_holds_is_waited_for_rather_than_failed`
+(`commands.rs`). The second was mutation-checked — reverting `reserve_walk_member` to a
+plain `reserve` makes it fail with the old message — so it is not vacuous.
+
+**An earlier frontend attempt at this was withdrawn, and the reason it failed is worth
+keeping.** A guard that disabled the second group's button conflicted with a deliberate
+assertion in `LaunchGroupSection.test.tsx` (its fixture's `Morning stack` and
+`Everything down` share `web`, and the test asserts the other group stays enabled). The
+backend fix leaves that assertion true, which is the sign it is at the right layer. No
+existing assertion was changed at any point.
+
+The frontend guards from that pass **stay**, with a different justification: they now stop
+the user queueing work already underway rather than preventing a failure. That is the
+better layering — correctness in the backend, courtesy in the UI.
+
+- A restore and a whole-group action cannot be started at the same time, in either
+  direction, at both the latch (`App.tsx`, `restoreLastRunSet` refuses while
   `groupActionsInFlight` is non-empty; `runProfileAction` refuses a profile a group holds)
   and the button (`OverviewView.tsx` restore button takes `busyGroups.size`;
-  `LaunchGroupSection.tsx` takes a `restoreBusy` prop). Either layer alone leaves a door
-  open: the latch without the button gives a live control that does nothing, the button
-  without the latch loses a click that lands before the state updates.
+  `LaunchGroupSection.tsx` takes a `restoreBusy` prop). The latch matters on its own because
+  the tray's restore item does not go through the button.
 - `profileLabel` moved above `restoreLastRunSet`, became a `useCallback` reading a new
   `latestSnapshot` ref, and now names the profile in a failed restore instead of printing
   its raw id. **The ref is load-bearing, not tidiness:** closing over `snapshot` makes the
   callback change identity every poll, which re-subscribes the tray effect once a second and
   fails two existing tests. Do not "simplify" it back.
-- Two tests added to `App.groups.test.tsx`, both verified to fail without the fix.
 
-**One fix was written and withdrawn on purpose.** Two groups sharing a member still collide
-when started together; a guard that made the second wait conflicted with a deliberate
-assertion in `LaunchGroupSection.test.tsx` (its fixture's `Morning stack` and
-`Everything down` share `web`, and the test asserts the other group stays enabled). That is
-a design trade rather than a plain defect, so it is a known limitation in `CHANGELOG.md`
-and a decision for the user, not something to re-fix without asking. No existing assertion
-was changed.
+**The release workflow's checksum step was wrong and is fixed** (`release.yml:172`). It ran
+`sha256sum ./*.zip ./*.tar.gz | sed 's# \./#  #'`, and since `sha256sum` already emits two
+spaces before its `./name`, the substitution produced *three* — one more than
+`sha256sum -c` accepts, so the published file failed on a perfectly good download. It now
+runs `sha256sum -- *.zip *.tar.gz`, which needs no post-processing, and then
+`sha256sum -c SHA256SUMS.txt` before publishing, so the same class of defect cannot ship
+again silently. `RELEASE_NOTES.md` gained the actual verification commands, including
+`--ignore-missing` for a partial download set. The v0.4.0 file that is already published
+cannot be changed; its workaround stays in `CHANGELOG.md` as the sole known limitation.
 
 ## 2026-08-31 v0.4.0 Published
 
@@ -91,9 +133,13 @@ reports five `FAILED` lines on a perfectly good download. Normalizing works:
 release's asset cannot be corrected in place anyway — so this is a **v0.5.0 fix plus a
 release-note line**, not something to patch now.
 
-**The local `apps/desktop/src-tauri/target/release/runcove-desktop.exe` is `FileVersion
-0.3.0`, not 0.4.0.** It was built before the version bump landed and was never rebuilt, so
-it is not a v0.4.0 build and must not be used as one. Use the downloaded portable zip.
+**The local `apps/desktop/src-tauri/target/release/runcove-desktop.exe` was rebuilt on
+2026-09-01 and now reads `FileVersion 0.4.0`.** It had been a stale `0.3.0` build, predating
+the version bump, which was a trap worth removing. Note what it is and is not: it is
+`main` **including the unreleased fixes above**, so it is not byte-comparable with the
+published v0.4.0 zip and is not the artifact users get. For testing the fixes it is the
+right build; for reproducing what a user sees, use the downloaded portable zip at
+`D:\tmp\runcove-v040-dl\`.
 
 The published release body was also diffed against `git show v0.4.0:RELEASE_NOTES.md` and
 matches apart from one trailing newline the API adds.

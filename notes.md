@@ -23,28 +23,77 @@ was written, measured against an existing test, and then withdrawn.
   were pinning exactly that. Fixed by reading the snapshot through a `latestSnapshot` ref so
   the callback is referentially stable. The rule this leaves behind: a callback that feeds
   an effect's dependency array must not close over the polled snapshot.
-- **The group-versus-group overlap fix was withdrawn after it contradicted a shipped test,
-  and the withdrawal is the decision.** Two groups may share a member, and starting both at
-  once makes the second fail on the shared one. A guard was written that made an overlapping
-  group wait, and it worked — but
-  `LaunchGroupSection.test.tsx`'s `locks a group's whole row while one of its actions is in
-  flight` asserts at its last line that a *different* group's Start stays enabled, and that
-  fixture's `Morning stack` `[db, web]` and `Everything down` `[web, astro]` share `web`. So
-  the guard and a deliberate, shipped assertion were in direct conflict. The restore case is
-  unambiguous (a restore walks *every* profile, so overlap is certain and total); this one is
-  a design trade — blocking the second group also holds up the members it does not share, and
-  the existing behavior of reporting the collision honestly is defensible. Changing a shipped
-  tested behavior on that kind of judgment is the user's call, not a reviewer's, so the guard
-  came out and the case is recorded as a known limitation in `CHANGELOG.md` instead. No
-  existing assertion was touched.
+- **The group-versus-group overlap was first attacked in the frontend, and that attempt
+  failing pointed at the real layer.** Two groups may share a member, and starting both at
+  once made the second fail on the shared one. A guard that disabled the second group's Start
+  worked, but `LaunchGroupSection.test.tsx`'s `locks a group's whole row while one of its
+  actions is in flight` asserts at its last line that a *different* group's Start stays
+  enabled, and that fixture's `Morning stack` `[db, web]` and `Everything down`
+  `[web, astro]` share `web`. The guard and a deliberate, shipped assertion were in direct
+  conflict, so the guard came out rather than the assertion.
+
+  Read again, that conflict was information rather than an obstacle. The assertion is right:
+  a user with two overlapping groups should be able to start both, and a UI that greys out
+  the second is answering a question the UI cannot answer — it does not know whether the
+  shared member is about to be ready. What was wrong was the backend refusing. **The fix is
+  therefore in `commands.rs`, and it makes the assertion true rather than working around it.**
+
+  Three candidate semantics for reaching a profile another operation holds:
+
+  | Semantics | Verdict |
+  | --- | --- |
+  | Fail (what shipped) | Rejected. The situation is ordinary, and the report reads as a fault the user caused. |
+  | Skip the member and continue | **Rejected, and this is the subtle one.** It breaks the ordering promise: the group's whole point is that `web` does not start until `db` is ready, and skipping `db` starts `web` against a database that is still coming up. |
+  | Wait for it, then take the ordinary path | Chosen. Ordering holds, and the reserved start's `AlreadyRunning` early return makes a member the other operation finished cost one event. |
+
+  Waiting also composes with the two directions that are not a start racing a start: a member
+  another operation *stopped* is then started, which is what this group asked for; and a group
+  *stop* that waits out a start re-checks `processes.info` afterwards, because the operation
+  it waited out may have been the very stop that member needed.
+
+  The wait is polled rather than signalled. A reservation is a `HashSet` entry, and adding a
+  condition variable to serve a wait that resolves in seconds would put a second
+  synchronization mechanism inside the lock that guards every lifecycle operation. A shutdown
+  is returned immediately instead of waited out, since nothing starts during one.
+
+  The budget is `PROFILE_READY_TIMEOUT_SECS + 5`, derived rather than written as its own
+  number: the operation being waited on may spend its entire readiness budget, so an equal
+  budget would let the waiter report a failure for a start that had not failed yet.
+
+  `try_reserve` was added to `ProcessManager` for this, because `AppError` is a flat string
+  with no discriminator — without it, the caller would have to match on
+  `"Another lifecycle operation is already in progress"` to tell a held profile from a
+  refusal, and a message edit would silently change control flow. `reserve` is expressed
+  through it, so no existing caller or message changed. Both tests were mutation-checked
+  against the old behavior. No existing assertion was touched at any point.
+
+  The frontend guards from the withdrawn pass stayed, re-justified: they stop the user
+  queueing work already underway. Correctness in the backend, courtesy in the UI.
+- **The release workflow's checksum step was defective, and the fix removed the step rather
+  than correcting it.** `release.yml` ran `sha256sum ./*.zip ./*.tar.gz | sed 's# \./#  #'`.
+  `sha256sum` already emits `HASH␣␣./name`, so substituting `␣./` with `␣␣` produced *three*
+  spaces, one more than `sha256sum -c` accepts — every line of the published file failed to
+  open on a byte-perfect download. The narrow fix was `sed 's#\./##'`, but the better one is
+  to stop needing a fix-up at all: `sha256sum -- *.zip *.tar.gz` emits the accepted shape
+  directly, and `--` protects a filename starting with `-` exactly as the `./` prefix did.
+  A `sha256sum -c SHA256SUMS.txt` now runs before the publish step, so the file RunCove tells
+  people to verify with is proven to work in the same job that writes it. That check, not the
+  substitution's absence, is what stops this class of defect from shipping again.
+
+  The `./` prefix was not pointless — it was guarding against a leading-dash filename — which
+  is why this is worth recording: the defect was a correct instinct implemented with the wrong
+  tool, not carelessness. `RELEASE_NOTES.md` also now prints the actual commands, including
+  `--ignore-missing`, because a plain `-c` counts the four archives a Windows-only user did
+  not download as failures.
 - **Verified clean, so these are not suspects:** `launch-group.ts` handles the empty group
   (`every` over nothing is vacuously true, and it returns `idle`); `PRAGMA foreign_keys` is
   ON in both `Storage` constructors, so the `ON DELETE CASCADE` that justified real tables
   over settings JSON actually fires; `save_launch_group`'s early returns drop the transaction,
   which rolls it back; the eight `RunStatusReason` variants are all covered by
-  `run-status.ts`; and `zhCnMessages: Record<MessageKey, Message>` makes the compiler enforce
-  bilingual parity, which `typecheck` passing proves — 33 `group.*` keys each side.
-- **Both new tests were checked against a reverted fix, not just for passing.** Each fails
+  `run-status.ts`; `zhCnMessages: Record<MessageKey, Message>` makes the compiler enforce
+  bilingual parity, which `typecheck` passing proves — 450 keys each side, no key on one side
+  only; and no `TODO`, `FIXME`, or `todo!` remains in any production source file.
+- **Every new test was checked against a reverted fix, not just for passing.** Each fails
   without its guard and passes with it. A test that is green either way pins nothing.
 
 ## 2026-08-31 P3 Housekeeping Disposition

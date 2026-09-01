@@ -6,29 +6,34 @@ All notable user-facing changes to RunCove are documented in this file.
 
 ### Fixed
 
-- A restore and a whole-group start can no longer run at the same time, in either
-  order. Both walk launch profiles and start them through the same per-profile
-  reservation, so overlapping them made whichever arrived second fail with an
-  "already starting" message that named no cause the user could act on. The button
-  that would start the second one is now disabled while the first runs.
+- Two things that start launch profiles in order — a restore and a whole-group
+  start — no longer fail each other when they overlap. They can legitimately share
+  profiles: a restore set is whatever was running last, and two groups may both need
+  the same database. Whichever arrived second used to fail on the shared profile with
+  an "already starting" message that named no cause the user could act on. It now
+  waits for that profile to settle and carries on, so the order each one promises
+  still holds, and a profile the other one already brought up simply counts as
+  started. Starting two groups that share a member now works.
+- A restore and a whole-group start are no longer offered at the same time. Waiting
+  makes overlapping them correct, but the second one would sit and wait for work
+  already underway, so the button that would start it is disabled while the first
+  runs and the tray's restore item ignores a repeat.
 - A failed restore now names the profile it stopped at as `Project / Profile`
   instead of printing the internal profile id, which is what a whole-group failure
   has always done.
+- The release workflow writes a `SHA256SUMS.txt` that `sha256sum -c` accepts, and
+  checks it before publishing. See the known limitation below for what to do about
+  the file already published with v0.4.0.
 
 ### Known Limitations
 
-- Starting two launch groups that share a member at the same time still fails on the
-  shared one. The group that reaches it second is refused, because the profile is
-  already being started, and the report names that member — accurate, but it reads
-  as a fault rather than a collision. Groups that share no members are unaffected.
-  Left as it is rather than made to wait, because blocking a group would also hold
-  up the members it does not share.
 - `sha256sum -c SHA256SUMS.txt` fails on every line of the checksum file published
-  with v0.4.0. The archives are intact and their hashes are correct: the release
-  workflow writes three spaces between the hash and the filename where the format
-  allows exactly two, so `sha256sum` reads the extra space as part of the name.
-  Until the workflow is corrected, verify with
+  with v0.4.0. The archives are intact and their hashes are correct: that workflow
+  run wrote three spaces between the hash and the filename where the format allows
+  exactly two, so `sha256sum` read the extra space as part of the name. The published
+  file cannot be changed, so verify it with
   `sed -E 's/^([0-9a-f]{64})[[:space:]]+/\1  /' SHA256SUMS.txt | sha256sum -c -`.
+  Releases after v0.4.0 do not need the workaround.
 
 ## [0.4.0] - 2026-08-31
 
