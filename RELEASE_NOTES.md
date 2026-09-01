@@ -65,3 +65,22 @@ Windows SmartScreen may show an unknown-publisher warning because the desktop
 executable is not code-signed. Download it only from this GitHub release and
 verify the archive against `SHA256SUMS.txt`. Microsoft Edge WebView2 Runtime is
 required and is included with current Windows 11 systems.
+
+To verify, put `SHA256SUMS.txt` beside the archives you downloaded and run:
+
+```bash
+sha256sum -c SHA256SUMS.txt
+```
+
+```powershell
+# Windows PowerShell, no sha256sum available
+(Get-FileHash runcove-desktop-windows-x86_64-portable.zip -Algorithm SHA256).Hash
+# compare, case-insensitively, against the matching line in SHA256SUMS.txt
+```
+
+`SHA256SUMS.txt` lists every archive in the release, so if you downloaded only one,
+add `--ignore-missing` — a plain `-c` counts the archives you did not download as
+failures. The v0.4.0 file has a formatting defect that makes `-c` report
+`No such file or directory` for every line even when all five archives are present;
+the checksums themselves are correct. See the v0.4.0 entry in `CHANGELOG.md` for the
+one-line workaround.

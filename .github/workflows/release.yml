@@ -174,8 +174,16 @@ jobs:
         run: |
           set -euo pipefail
           cd release-assets
-          sha256sum ./*.zip ./*.tar.gz | sed 's# \./#  #' | sort -k2 > SHA256SUMS.txt
+          # `--` rather than a `./` prefix on each path: it protects a name starting with
+          # `-` just as well, and leaves sha256sum's own `HASH<space><space>name` output
+          # already in the shape `sha256sum -c` accepts. The previous version stripped the
+          # prefix afterwards with `sed 's# \./#  #'`, which put *three* spaces in every
+          # line and made the published file fail `-c` on a perfectly good download.
+          sha256sum -- *.zip *.tar.gz | sort -k2 > SHA256SUMS.txt
           cat SHA256SUMS.txt
+          # Prove the file we are about to publish is the file we tell people to check
+          # with. Cheap, and the only thing that stops this from silently regressing.
+          sha256sum -c SHA256SUMS.txt
 
       - name: Publish release
         env:
