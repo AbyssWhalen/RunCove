@@ -19,6 +19,26 @@ use sysinfo::Pid;
 use sysinfo::{ProcessesToUpdate, System};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
+/// How long a start waits for a profile's expected ports before giving up.
+const PROFILE_READY_TIMEOUT_SECS: u64 = 20;
+const PROFILE_READY_TIMEOUT: Duration = Duration::from_secs(PROFILE_READY_TIMEOUT_SECS);
+
+/// How long a group member waits for a lifecycle reservation another operation holds.
+///
+/// Deliberately longer than the readiness wait, and derived from it rather than written
+/// as its own number: the operation being waited on may spend that whole budget waiting
+/// for its own ports, so a waiter that gave up first would report a failure for a start
+/// that had not failed yet.
+const RESERVATION_HANDOFF_TIMEOUT: Duration = Duration::from_secs(PROFILE_READY_TIMEOUT_SECS + 5);
+
+/// How long a stop waits for a profile's process tree to disappear.
+const PROFILE_STOP_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// Polling interval for the waits that only read in-memory process state. The readiness
+/// wait polls far slower on purpose, because each of its rounds costs a full port scan
+/// and a process-table refresh.
+const STATE_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
 #[tauri::command]
 pub fn get_dashboard_snapshot(state: State<'_, AppState>) -> AppResult<DashboardSnapshot> {
     state.dashboard()
@@ -274,8 +294,17 @@ fn stop_profile_inner<R: Runtime>(
     state: &AppState,
 ) -> AppResult<RunStatusEvent> {
     let reservation = state.processes.reserve(profile_id)?;
-    state.processes.stop(&reservation, profile_id)?;
-    wait_for_profile_stopped(profile_id, state, Duration::from_secs(8))?;
+    stop_profile_inner_reserved(&reservation, profile_id, app, state)
+}
+
+fn stop_profile_inner_reserved<R: Runtime>(
+    reservation: &crate::processes::ProfileReservation,
+    profile_id: &str,
+    app: &AppHandle<R>,
+    state: &AppState,
+) -> AppResult<RunStatusEvent> {
+    state.processes.stop(reservation, profile_id)?;
+    wait_for_profile_stopped(profile_id, state, PROFILE_STOP_TIMEOUT)?;
     sync_active_restore_set(state)?;
     let event = status_event_with_reason(
         profile_id.into(),
@@ -306,7 +335,7 @@ fn restart_profile_inner<R: Runtime>(
     let reservation = state.processes.reserve(profile_id)?;
     if state.processes.info(profile_id).is_some() {
         state.processes.stop(&reservation, profile_id)?;
-        wait_for_profile_stopped(profile_id, state, Duration::from_secs(8))?;
+        wait_for_profile_stopped(profile_id, state, PROFILE_STOP_TIMEOUT)?;
     }
     start_profile_inner_reserved(&reservation, profile_id, app, state)
 }
@@ -327,7 +356,7 @@ fn restore_last_run_set_inner<R: Runtime>(
 ) -> AppResult<RestoreResult> {
     let restore = state.storage.restore_set()?;
     Ok(restore_profiles(restore.profile_ids, |profile_id| {
-        restore_profile(profile_id, app, state)
+        start_walk_member(profile_id, app, state)
     }))
 }
 
@@ -357,14 +386,52 @@ fn restore_profiles(
     }
 }
 
-fn restore_profile<R: Runtime>(
+/// Start one profile of an ordered walk — a restore set or a launch group — waiting out
+/// an operation that already holds it.
+///
+/// Two walks can overlap in membership: groups may share a member (a database two stacks
+/// both need is the obvious case), and a restore set is whatever was running last, which
+/// may be exactly a group's members. Reaching a profile another operation is in the
+/// middle of is therefore ordinary, not a failure. Failing was the old behavior, and it
+/// meant two overlapping walks could not be run close together at all.
+///
+/// Waiting keeps the walk's ordering promise, because the next entry still does not start
+/// until this one has settled. An entry the other operation brought up costs one
+/// `AlreadyRunning` event and nothing else; one it stopped is started here, which is what
+/// this walk asked for.
+fn start_walk_member<R: Runtime>(
     profile_id: &str,
     app: &AppHandle<R>,
     state: &AppState,
 ) -> AppResult<()> {
-    let reservation = state.processes.reserve(profile_id)?;
+    let reservation = reserve_walk_member(profile_id, state)?;
     start_profile_inner_reserved(&reservation, profile_id, app, state)?;
     Ok(())
+}
+
+/// Take a profile's lifecycle reservation, waiting out an operation that holds it.
+///
+/// Polling, because a reservation is a `HashSet` entry with no condition variable to
+/// wait on, and adding one to serve a wait that resolves in seconds would put a second
+/// synchronization mechanism inside the lock that guards every lifecycle operation.
+/// A shutdown is returned immediately rather than waited out: nothing starts or stops
+/// during one, so the answer cannot change before the deadline.
+fn reserve_walk_member(
+    profile_id: &str,
+    state: &AppState,
+) -> AppResult<crate::processes::ProfileReservation> {
+    let deadline = Instant::now() + RESERVATION_HANDOFF_TIMEOUT;
+    loop {
+        if let Some(reservation) = state.processes.try_reserve(profile_id)? {
+            return Ok(reservation);
+        }
+        if Instant::now() >= deadline {
+            return Err(invalid(
+                "Another lifecycle operation is still in progress for this profile",
+            ));
+        }
+        std::thread::sleep(STATE_POLL_INTERVAL);
+    }
 }
 
 /// Writing a launch group takes no process reservation, unlike `save_project`. A
@@ -409,7 +476,7 @@ fn start_launch_group_inner<R: Runtime>(
 ) -> AppResult<LaunchGroupStartResult> {
     let group = group_to_run(group_id, state)?;
     let restore = restore_profiles(group.profile_ids, |profile_id| {
-        restore_profile(profile_id, app, state)
+        start_walk_member(profile_id, app, state)
     });
     Ok(LaunchGroupStartResult {
         group_id: group.id,
@@ -441,7 +508,15 @@ fn stop_launch_group_inner<R: Runtime>(
         if state.processes.info(profile_id).is_none() {
             return Ok(false);
         }
-        stop_profile_inner(profile_id, app, state)?;
+        // Reserve the same way a group start does, and for the same reason: a member two
+        // groups share can be held by the other one. The running check is repeated after
+        // the wait because the operation we waited out may have been the stop this member
+        // needed, and reporting that as this group's failure would be wrong.
+        let reservation = reserve_walk_member(profile_id, state)?;
+        if state.processes.info(profile_id).is_none() {
+            return Ok(false);
+        }
+        stop_profile_inner_reserved(&reservation, profile_id, app, state)?;
         Ok(true)
     });
     Ok(LaunchGroupStopResult {
@@ -881,7 +956,7 @@ fn start_profile_inner_reserved<R: Runtime>(
     if let Err(error) = sync_active_restore_set(state) {
         return fail_started_profile(reservation, profile_id, app, state, error);
     }
-    if let Err(error) = wait_for_profile_ready(profile_id, state, Duration::from_secs(20)) {
+    if let Err(error) = wait_for_profile_ready(profile_id, state, PROFILE_READY_TIMEOUT) {
         return fail_started_profile(reservation, profile_id, app, state, error);
     }
     state.processes.set_status(profile_id, RunStatus::Running);
@@ -926,7 +1001,7 @@ fn stop_profile_after_failed_start_if_running(
     state
         .processes
         .stop_after_failed_start(reservation, profile_id)?;
-    wait_for_profile_stopped(profile_id, state, Duration::from_secs(8))
+    wait_for_profile_stopped(profile_id, state, PROFILE_STOP_TIMEOUT)
 }
 
 fn sync_active_restore_set(state: &AppState) -> AppResult<()> {
@@ -944,7 +1019,7 @@ fn wait_for_profile_stopped(
 ) -> AppResult<()> {
     let deadline = Instant::now() + timeout;
     while state.processes.info(profile_id).is_some() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(STATE_POLL_INTERVAL);
     }
     if state.processes.info(profile_id).is_some() {
         Err(invalid("Timed out while stopping the process tree"))
@@ -2211,6 +2286,53 @@ setInterval(() => {}, 1000);
         let json = serde_json::to_value(&result).unwrap();
         assert_eq!(json["relatedPort"]["port"], 5173);
         assert_eq!(json["relatedPort"]["protocol"], "tcp");
+    }
+
+    /// Two ordered walks can overlap in membership — two groups sharing a profile, or a
+    /// restore set that is exactly a group's members. Before this waited, the shared
+    /// profile failed the whole second walk, so overlapping walks were unusable together.
+    #[test]
+    fn a_walk_member_another_operation_holds_is_waited_for_rather_than_failed() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = Arc::new(Storage::open(&temp.path().join("shared-member.sqlite3")).unwrap());
+        let processes = Arc::new(ProcessManager::new(10));
+        let state = AppState {
+            storage,
+            processes: processes.clone(),
+        };
+
+        let holder = processes.reserve("shared").unwrap();
+        let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let releaser = {
+            let released = released.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(200));
+                released.store(true, std::sync::atomic::Ordering::SeqCst);
+                drop(holder);
+            })
+        };
+
+        let reservation = match reserve_walk_member("shared", &state) {
+            Ok(reservation) => reservation,
+            Err(error) => panic!("waiting for a held member failed: {error}"),
+        };
+        assert!(
+            released.load(std::sync::atomic::Ordering::SeqCst),
+            "returned a reservation before the holder released it"
+        );
+        releaser.join().unwrap();
+        drop(reservation);
+
+        // A shutdown is the one refusal that must not be waited out, because nothing can
+        // start during one. It has to come back well inside the handoff budget.
+        let _shutdown = processes.reserve_shutdown().unwrap();
+        let started = Instant::now();
+        let error = match reserve_walk_member("shared", &state) {
+            Err(error) => error,
+            Ok(_) => panic!("reserved a member during shutdown"),
+        };
+        assert!(error.to_string().contains("shutdown"));
+        assert!(started.elapsed() < RESERVATION_HANDOFF_TIMEOUT);
     }
 
     #[test]

@@ -310,6 +310,23 @@ impl ProcessManager {
     }
 
     pub fn reserve(&self, profile_id: &str) -> AppResult<ProfileReservation> {
+        self.try_reserve(profile_id)?
+            .ok_or_else(|| invalid("Another lifecycle operation is already in progress"))
+    }
+
+    /// Reserve a profile, reporting a reservation another operation already holds as
+    /// `None` rather than as an error.
+    ///
+    /// The distinction exists for the ordered walks — a restore set and a launch group —
+    /// which can legitimately overlap in membership and so can reach a profile another
+    /// operation is already acting on. "Something else holds this" is a different
+    /// situation from "this cannot be reserved", and only the caller knows which of the
+    /// two it can act on. A shutdown stays an error, because nothing starts during one.
+    ///
+    /// Separating them here rather than at the call site is deliberate: `AppError` is a
+    /// flat string, so the alternative is matching on the message text of `reserve`, and
+    /// then editing that message would silently change control flow.
+    pub fn try_reserve(&self, profile_id: &str) -> AppResult<Option<ProfileReservation>> {
         let mut reservations = self
             .lifecycle_reservations
             .lock()
@@ -318,14 +335,12 @@ impl ProcessManager {
             return Err(invalid("Application shutdown is already in progress"));
         }
         if !reservations.profiles.insert(profile_id.to_owned()) {
-            return Err(invalid(
-                "Another lifecycle operation is already in progress",
-            ));
+            return Ok(None);
         }
-        Ok(ProfileReservation {
+        Ok(Some(ProfileReservation {
             profile_id: profile_id.to_owned(),
             reservations: self.lifecycle_reservations.clone(),
-        })
+        }))
     }
 
     pub fn reserve_many(&self, profile_ids: &[String]) -> AppResult<Vec<ProfileReservation>> {
@@ -1483,6 +1498,23 @@ mod tests {
         drop(reservations);
         assert!(manager.reserve("first").is_ok());
         assert!(manager.reserve("second").is_ok());
+    }
+
+    /// `try_reserve` exists so a caller can tell "another operation holds this" from
+    /// "this cannot be reserved at all". `AppError` carries no discriminator, so a
+    /// caller that only had `reserve` would have to match on the message text.
+    #[test]
+    fn try_reserve_separates_a_held_profile_from_a_refusal() {
+        let manager = ProcessManager::new(10);
+
+        let held = manager.try_reserve("profile").unwrap().unwrap();
+        assert!(manager.try_reserve("profile").unwrap().is_none());
+        assert!(manager.try_reserve("other").unwrap().is_some());
+        drop(held);
+        assert!(manager.try_reserve("profile").unwrap().is_some());
+
+        let _shutdown = manager.reserve_shutdown().unwrap();
+        assert!(manager.try_reserve("profile").is_err());
     }
 
     #[test]
