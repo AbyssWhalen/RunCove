@@ -88,6 +88,43 @@ release notes were edited in place. The zips inside the release still embed the 
 churn the artifacts users verify by checksum for no functional gain, so that was
 deliberately not done.
 
+### The README was cut 57% and one behavior was nearly lost with it
+
+The user asked for a shorter, Chinese-first README. It went from 285 lines / 21,279
+characters to 177 / 9,084 — the old file alternated an English paragraph with its Chinese
+translation throughout, so most of the cut is the removed duplication rather than removed
+information. English survives as one blockquote paragraph up top; `CHANGELOG.md` and the
+release notes stay English.
+
+Every safety notice was checked back in by grep, not by memory: 升级不可逆, 令牌 (the
+archive may capture credentials), 未签名 / SmartScreen, WebView2, 只读 (elevated mode
+disables actions), PID revalidation, `.env` is not read, and the port trust order. All four
+internal anchor links were dropped after confirming nothing outside the file referenced
+them.
+
+The rewrite did drop one real user-visible behavior — the last development root is
+re-scanned once at startup — and it was caught on a re-read rather than by any check. It is
+restored in `7963b9e`, verified against `App.tsx:289-293`. A summary that loses a behavior
+reads as clean prose, so the only defense is re-reading the cut against the source.
+
+### One CI failure, not repeatable, not a regression
+
+`cfcb260` — a docs-only commit — failed the Windows desktop job on
+`manual_start_stays_starting_until_managed_expected_port_is_ready`. It asserted at
+`commands.rs:2759` that the fixture's port was not yet connectable while the profile read
+`Starting`; `TcpStream::connect` succeeded instead. The fixture sleeps 5 s before it
+listens, so a runner slow enough to spend 5 s between the status check and the connect
+attempt inverts the assertion. That commit touched only `README.md`, so a Rust failure
+there cannot be a regression from it, and `7963b9e` — also docs-only — passed all five jobs
+on the same runner image.
+
+Recorded as environment-dependent, which the repository has precedent for
+(`external_termination_with_verified_identity_stops_tree_and_releases_port`, 2026-08-18).
+Deliberately not "fixed": widening the timing window means weakening the assertion, and the
+contract it tests — status stays `Starting` until the expected port is listening *and* owned
+by the profile's tree — is the whole point of `wait_for_profile_ready`. A test that is
+occasionally wrong about timing is worth more than one that no longer checks the ordering.
+
 ## 2026-08-31 Post-Release Review
 
 A read-through of the shipped v0.4.0 code, with the user's standing approval to fix what
