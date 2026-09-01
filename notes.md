@@ -112,6 +112,24 @@ was written, measured against an existing test, and then withdrawn.
   "risky". The earlier framing was accurate about irreversibility and silent about volume,
   which made it read as more dangerous than it is. The backup stays anyway, because the
   argument for it never depended on the row count.
+- **Then the same rehearsal was run through the shipped binary, which is a different claim.**
+  A library call proves `Storage::open` migrates; it does not prove the application starts.
+  So an isolated build was made — identifier `com.abysswhale.runcove.verify0901`, and
+  `INSTANCE_MUTEX_NAME` changed with it, because that constant is hardcoded rather than
+  derived from the identifier and an isolated build would otherwise contend with a
+  production instance for the same mutex — its data directory was seeded with another copy of
+  the live `user_version = 1` file, and it was launched. It came up with a window titled
+  `RunCove` and migrated the seeded database to 3 during startup. Both patched files were
+  restored with `git checkout --`.
+
+  Worth stating plainly because it was not true before today: **this is the first evidence in
+  the project that the built application boots.** Everything else — 252 desktop tests, 211
+  frontend tests, 7 e2e — exercises units or a mocked frontend. Cite the two separately; a
+  green suite has never implied a binary that runs.
+
+  The isolated-build pattern is the reusable part: patch the identifier *and* the mutex name,
+  seed the isolated data directory with a copy, launch, then `git checkout --` the two files.
+  It answers "does it work on the user's data" without ever opening the user's data.
 
 ## 2026-08-31 P3 Housekeeping Disposition
 

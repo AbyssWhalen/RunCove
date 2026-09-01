@@ -155,15 +155,30 @@ build against the real database is the intended next step rather than something 
 Prefer the published portable zip over that local build, since the zip is the artifact
 users get. Nothing here has launched either one.
 
-**That migration was rehearsed on 2026-09-01 against a copy of the real database, and it
-succeeded.** The live file was copied (the original opened read-only, never written) to
-`D:\tmp\migration-check\runcove.sqlite3` and handed to `Storage::open` — the exact call
-`lib.rs:240` makes at startup — through a temporary test in `storage.rs` that was deleted
-afterwards, leaving that file byte-identical to its committed state. Result: the copy went
-`user_version` 1 → 3, all three tables the two migrations add (`run_log_archives`,
-`launch_groups`, `launch_group_members`) exist, and `settings()`, `list_projects()`,
-`list_launch_groups()`, and `list_sessions()` all read back cleanly. The live file was
-re-checked afterwards and is still at `user_version = 1`.
+**That migration was rehearsed twice on 2026-09-01 against copies of the real database, and
+it succeeded both times.** The second rehearsal is the one that counts, because it ran the
+shipped binary rather than a library call.
+
+1. *Library path.* The live file was copied (the original opened read-only, never written)
+   to `D:\tmp\migration-check\runcove.sqlite3` and handed to `Storage::open` — the exact
+   call `lib.rs:240` makes at startup — through a temporary test in `storage.rs` that was
+   deleted afterwards, leaving that file byte-identical to its committed state.
+2. *Whole application.* An isolated build (`com.abysswhale.runcove.verify0901`, with
+   `INSTANCE_MUTEX_NAME` changed to match so it could not collide with a production
+   instance) was produced, its data directory seeded with another copy of the live
+   `user_version = 1` file, and launched. It came up with a window titled `RunCove`, 78
+   threads, 96 MB working set, and **migrated the seeded database 1 → 3 on startup**. Both
+   patched files were restored with `git checkout --` afterwards and the tree is clean.
+
+Both runs ended at `user_version = 3` with all three tables the two migrations add
+(`run_log_archives`, `launch_groups`, `launch_group_members`) present, the 4 run sessions and
+2 settings rows intact, and every reader (`settings`, `list_projects`, `list_launch_groups`,
+`list_sessions`) working. The live file was re-checked after each and is still at
+`user_version = 1`.
+
+This is also the first evidence in this project that the built application *starts* — every
+other check is a test. Keep the distinction when citing it: the tests prove the units, the
+isolated launch proves the binary boots and migrates.
 
 **What that measurement also settled: there is almost nothing at risk.** The real database
 holds 0 projects, 0 launch profiles, 0 expected ports, 0 port associations, 0 restore-set
