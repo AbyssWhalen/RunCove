@@ -1,8 +1,7 @@
 # RunCove v0.4.1
 
 RunCove v0.4.1 is a fix release for v0.4.0. It changes no features and needs no
-database migration: if you are already on v0.4.0, this is a drop-in replacement,
-and the download is about a third smaller.
+database migration: if you are already on v0.4.0, this is a drop-in replacement.
 
 ## Fixed
 
@@ -25,11 +24,13 @@ and the download is about a third smaller.
   Waiting makes overlapping them correct, but the second would only sit and wait
   for work already underway, so the button that starts it is disabled while the
   first runs.
-- **The desktop download is about a third smaller** — roughly 8.6 MB against 13 MB.
-  The project's release build settings had never reached the desktop application:
-  they were written once at the repository root, and the desktop app is a separate
-  Cargo package rather than a workspace member, so it was the only shipped binary
-  built without them. Nothing about how RunCove behaves changes.
+- **The desktop executable is built with the release settings it was always meant
+  to get.** They were written once at the repository root, and the desktop app is a
+  separate Cargo package rather than a workspace member, so it was the only shipped
+  binary built without link-time optimization. Measured on the same builder and
+  compiler as v0.4.0, the executable goes from 13,212,672 to 11,978,752 bytes — 9%
+  smaller, and about 91 KB off the download once compressed. Nothing about how
+  RunCove behaves changes.
 
 ## Upgrade Note
 

@@ -20,6 +20,33 @@ notes on the v0.4.1 release page — a defect in the *release*, invisible to fmt
 every test, and CI. Check that file against the tag before every future release; it is
 the one artifact the workflow reads and nothing validates.
 
+**Run 33479967618 published it: all seven jobs green, and the artifacts were verified by
+real download afterwards.** `sha256sum -c SHA256SUMS.txt` now passes all five lines with
+a plain invocation and no workaround, on files fetched from the release page — `od -c`
+shows exactly two spaces after each hash. That was the checksum fix's whole purpose, and
+it is now demonstrated on a published artifact rather than argued from the workflow. The
+release page carries v0.4.1's own notes, and the desktop exe inside the zip reports
+`FileVersion 0.4.1`. The release-asset CDN aborted the desktop zip mid-transfer once, as
+it has before on this machine; a plain retry completed it, and the CLI archives all
+matched their release metadata on the first try.
+
+**The size claim in the first published notes was wrong, and it was corrected after
+publication.** They said the download was "about a third smaller — roughly 8.6 MB against
+13 MB". The measured truth, builder-to-builder, is 13,212,672 → 11,978,752 bytes: 9%
+smaller, about 91 KB off the compressed zip. The error was pairing the *local* post-fix
+size (8,557,568) with the *published* pre-fix size (13,212,672) — two different machines
+on two different compilers, across the very 1.96x local-vs-CI gap this repository had
+already recorded as unexplained. Having flagged that gap and then read across it is the
+part worth remembering: **a before/after size number is only meaningful when both halves
+come from the same builder.** Both releases were built by rustc 1.98.0 on
+`windows-latest`; local was 1.96.0.
+
+What the profile actually buys on that builder, measured on both exes: the `.pdb`
+reference and its `RSDS` signature survive in both, because MSVC keeps debug info in a
+separate file and `strip` has almost nothing to take out of the exe — so the win is
+`lto` and `codegen-units = 1`, visible as cargo-registry path literals halving from 368
+to 186. The profile is still worth keeping; it is simply worth 9% here, not 67%.
+
 Three findings from reading the shipping code, recorded because they are properties
 rather than changes:
 

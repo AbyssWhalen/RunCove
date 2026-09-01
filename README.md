@@ -10,13 +10,14 @@ The v0.4.1 release is distributed as a portable Windows x64 zip from the [RunCov
 
 ## Current Release / 当前版本
 
-RunCove v0.4.1 is a fix release for v0.4.0. It changes no features, reads the same
-schema version 3 database, and cuts the download by about a third. Two starts that
-share a launch profile now wait for each other instead of failing, and
-`SHA256SUMS.txt` passes `sha256sum -c`. See [CHANGELOG.md](CHANGELOG.md).
-/ RunCove v0.4.1 是 v0.4.0 的修复版：功能不变，数据库仍是 schema 版本 3，下载体积
-约减少三分之一。共享同一启动配置的两次启动现在会互相等待而不再失败，
-`SHA256SUMS.txt` 也能通过 `sha256sum -c` 校验。
+RunCove v0.4.1 is a fix release for v0.4.0. It changes no features and reads the
+same schema version 3 database. Two starts that share a launch profile now wait for
+each other instead of failing, `SHA256SUMS.txt` passes `sha256sum -c`, and the
+desktop executable is 9% smaller because it finally gets the project's release build
+settings. See [CHANGELOG.md](CHANGELOG.md).
+/ RunCove v0.4.1 是 v0.4.0 的修复版：功能不变，数据库仍是 schema 版本 3。共享同一
+启动配置的两次启动现在会互相等待而不再失败，`SHA256SUMS.txt` 也能通过
+`sha256sum -c` 校验，桌面可执行文件因为终于用上了项目的发布构建设置而缩小约 9%。
 
 The headline feature remains v0.4.0's named launch groups, described below.
 / 主要功能仍是 v0.4.0 引入的具名启动组，说明如下。

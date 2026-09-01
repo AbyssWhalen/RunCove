@@ -30,11 +30,12 @@ same schema version 3 database, so upgrading from v0.4.0 needs no backup.
   checks it before publishing. See the known limitation below for what to do about
   the file already published with v0.4.0.
 - The desktop executable is built with the release settings the project already
-  meant to apply to it, so the download drops from about 13 MB to 8.6 MB. The
-  settings had been written once at the repository root, but the desktop
-  application is a separate Cargo package rather than a workspace member, so it
-  never received them and was the only shipped binary built without them. Nothing
-  about how RunCove behaves changes; the download is simply smaller.
+  meant to apply to it. They had been written once at the repository root, but the
+  desktop application is a separate Cargo package rather than a workspace member, so
+  it never received them and was the only shipped binary built without link-time
+  optimization. Measured on the same builder and compiler as v0.4.0, the executable
+  goes from 13,212,672 to 11,978,752 bytes — 9% smaller, and about 91 KB off the
+  compressed download. Nothing about how RunCove behaves changes.
 
 ### Known Limitations
 

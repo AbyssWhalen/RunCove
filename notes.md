@@ -46,6 +46,48 @@ same runner, so a wrong format fails the release rather than shipping. When a lo
 simulation and self-verification-in-target-environment disagree about what has been
 proven, the second one is the claim to make.
 
+**Both halves of that argument now have their answer from the published artifact.** Run
+33479967618 went green on all seven jobs and published the release; the five archives and
+`SHA256SUMS.txt` were then downloaded from the release page, and a plain
+`sha256sum -c SHA256SUMS.txt` returned `OK` on every line with exit 0. `od -c` on the
+first line shows two spaces. So the fix is confirmed where it matters, on a real download,
+with no workaround — the thing the v0.4.0 file could not do.
+
+### The size claim was wrong, and the mistake is the useful part
+
+The published notes said the download was "about a third smaller — roughly 8.6 MB against
+13 MB". Measured on the two published exes:
+
+| build | exe bytes |
+| --- | --- |
+| v0.4.0, CI, no desktop `[profile.release]` | 13,212,672 |
+| v0.4.1, CI, with it | 11,978,752 |
+| v0.4.1, this machine, with it | 8,557,568 |
+
+The real win is **9%**, about 91 KB off the compressed zip — not a third. The wrong number
+came from pairing the third row with the first: a local post-fix build against a CI pre-fix
+build. Both releases were built by rustc 1.98.0 on `windows-latest`; local is rustc 1.96.0.
+That local-vs-CI baseline gap (25,912,797 against 13,212,672, 1.96x) was **already recorded
+in this file as measured and unexplained** — and then read straight across anyway. The rule
+worth keeping: *a before/after measurement is only a measurement when both halves come from
+the same builder.* An unexplained gap between two environments is precisely the signal not
+to mix numbers from them.
+
+The correction also sharpened what the profile does here. On both published exes the `.pdb`
+path and its `RSDS` signature are still present, so `strip = true` is nearly inert on MSVC —
+debug info was never in the exe to begin with. The reduction is `lto` and
+`codegen-units = 1`, corroborated by cargo-registry path literals dropping from 368 to 186.
+The earlier note that "LTO did the bulk" was right for the wrong reason: it was right
+because strip had nothing to remove, not because debug info was absent from a release
+build. Keep the profile — 9% and a denser binary on every user's download is worth a
+duplicated four-line block — but do not describe it as a third.
+
+`README.md`, `CHANGELOG.md`, and `RELEASE_NOTES.md` were corrected, and the published
+release notes were edited in place. The zips inside the release still embed the earlier
+`README.md` and `CHANGELOG.md` text: replacing published binaries to fix one sentence would
+churn the artifacts users verify by checksum for no functional gain, so that was
+deliberately not done.
+
 ## 2026-08-31 Post-Release Review
 
 A read-through of the shipped v0.4.0 code, with the user's standing approval to fix what
