@@ -153,6 +153,45 @@ was written, measured against an existing test, and then withdrawn.
   The general lesson, since this is the second time this shape has come up: a feature can have
   several tests and still have none on the path a user takes. Count the paths, not the tests.
   Both times the missing one was the happy path, because failure paths are easier to write.
+- **The desktop executable was the one shipped binary built without the project's release
+  settings, and a size measurement is what exposed it.** Installing the app locally put a
+  25,912,797-byte exe next to the 13,212,672-byte one published with v0.4.0. A 1.96x gap
+  between the same source at the same version is not explainable by build noise, so it was
+  worth chasing rather than shrugging at.
+
+  The cause is a structural assumption that was never true here. The root `Cargo.toml` carries
+  `[profile.release] strip = true, lto = true, codegen-units = 1`, and profile settings apply
+  to a whole workspace — but **the root manifest has no `[workspace]` section**, so
+  `apps/desktop/src-tauri` is an unrelated package rather than a member. When cargo's build
+  root is the desktop manifest, the root's profile is not read at all. Cargo does not warn:
+  ignoring a profile in a non-root manifest is normal, and there is nothing here for it to
+  call suspicious. So the CLI binaries got strip and LTO and the desktop application — the
+  artifact users actually download — got neither, which is the exact inverse of what writing
+  those settings once was meant to achieve.
+
+  Fixed by repeating the block in `apps/desktop/src-tauri/Cargo.toml` with a comment saying
+  why it is duplicated, so the next reader does not "clean up" the duplication. Creating a
+  real workspace would remove the duplication instead, and was rejected for this change: it
+  moves both packages' target directories and lockfiles and touches the release workflow, all
+  to tidy six lines. The exe is now **8,557,568 bytes** — 0.33x the unstripped local build and
+  0.65x the published v0.4.0.
+
+  The build-time cost was overstated on first measurement and the correction is the useful
+  part. The build right after the change took 3m22s, which invited "LTO doubles the build" —
+  but that build recompiled every dependency under a profile none of them had been built
+  with. The next full release build took **1m53s** against roughly 1m34s before, so the
+  recurring cost is about twenty seconds and the large number is paid once per profile
+  change. Measure a build-time regression on the second build, not the first.
+
+  **`cargo test` cannot verify this change**, which is the part worth carrying forward: tests
+  build under the `test` profile, so a green suite says nothing about whether LTO and strip
+  produced a working release binary. The isolated-build recipe from the migration rehearsal
+  answered it instead — identifier and mutex patched to `lto0901`, data directory seeded with
+  a `user_version = 1` copy, launched. It came up titled `RunCove`, spawned six WebView2
+  processes including a live renderer, sampled 1,415 distinct colours across its 1295×800
+  client area, and migrated the seeded database to 3 with the 4 sessions and 2 settings intact.
+  The colour count is the assertion that matters: a binary whose embedded frontend assets had
+  been damaged would still migrate the database and still show a window, just an empty one.
 
 ## 2026-08-31 P3 Housekeeping Disposition
 

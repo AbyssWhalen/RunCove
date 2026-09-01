@@ -224,6 +224,46 @@ on 2026-08-31 and the decision below is the one that came back from actually loo
   cited three times and never by line, would buy one filename and cost the consistency of
   the pair. Reopen this only with a plan that also rewrites the citations.
 
+**RunCove is now installed on this machine, and the first launch is still the user's to
+make.** Asked how to actually use it, the answer was that nothing was installed: `tauri.conf`
+has `bundle.active: false` with no targets, so this project produces **no installer** by
+design and the published artifact is a portable zip. So the exe was copied to
+`%LOCALAPPDATA%\Programs\RunCove\RunCove.exe` alongside the same three documents the zip
+carries, and Start Menu and Desktop shortcuts were created with `WScript.Shell` and verified
+to resolve to it with the right working directory. To remove it: delete that folder and the
+two `.lnk` files. **It was deliberately not launched** — a production-identifier launch
+migrates the real database `1 → 3` irreversibly, which `CLAUDE.md` reserves for the user.
+The backup is at `%LOCALAPPDATA%\RunCove-backup-v0.3.0-2026-08-31\runcove.sqlite3`.
+
+**The desktop executable had been missing the project's release settings, and it is the
+artifact users download.** Installing it is what surfaced this: the local exe was 25,912,797
+bytes against the 13,212,672 published with v0.4.0, and a 1.96x gap at the same version is
+not build noise. The root `Cargo.toml` carries `[profile.release] strip / lto /
+codegen-units`, but it has **no `[workspace]` section**, so `apps/desktop/src-tauri` is an
+unrelated package and cargo never reads the root profile when that manifest is the build
+root. The CLI binaries got strip and LTO; the desktop application got neither. Fixed by
+repeating the block in `apps/desktop/src-tauri/Cargo.toml` with a comment explaining why it
+is duplicated — do not "clean up" that duplication without creating a real workspace, which
+was rejected here as moving both packages' target directories and lockfiles to tidy six
+lines. The exe is now **8,557,568 bytes**, 0.65x the published v0.4.0.
+
+The build cost is worth stating precisely, because the first measurement overstated it.
+The build immediately after the change took 3m22s, but that is the one where every
+dependency recompiles under a profile it had not been built with; the next full release
+build took **1m53s** against roughly 1m34s before. So the steady-state cost is about
+twenty seconds, and CI pays the larger number once. The workflow sets no
+`timeout-minutes`, so GitHub's six-hour default applies and neither figure is a risk.
+
+State the verification this way, because the obvious check does not apply: **`cargo test`
+cannot validate this change at all**, since tests build under the `test` profile. The
+isolated-build recipe was used instead — identifier and `INSTANCE_MUTEX_NAME` patched to
+`lto0901`, data directory seeded with a `user_version = 1` copy, launched, then both files
+restored with `git checkout --`. It came up titled `RunCove` with a live WebView2 renderer,
+1,415 distinct colours sampled across its 1295×800 client area, and migrated the seeded
+database to 3 with its 4 sessions and 2 settings intact. The colour count is the load-bearing
+assertion: a binary whose embedded frontend assets had been damaged by `strip` would still
+migrate the database and still show a window, just an empty one.
+
 **Still unauthorized, each needing its own ask:** any rewrite of published history (the
 `[codex]` marker in `bd2b777` and the two `[Qoder]` markers stay) and any change to
 `.github/workflows/`.
