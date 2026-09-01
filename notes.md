@@ -1,5 +1,51 @@
 # RunCove Implementation Notes
 
+## 2026-09-01 v0.4.1: What The Pre-Release Review Found
+
+The user delegated the release decision after asking for a review first. The review is
+the part worth recording, because most of what it found could not have been caught by
+anything already in place.
+
+- **The release-blocking defect was in a file nothing validates.** `release.yml`
+  publishes with `--notes-file RELEASE_NOTES.md`, and that file described v0.4.0 from its
+  title down. Tagging would have shipped v0.4.0's notes as v0.4.1's. Nothing would have
+  objected: it is not compiled, not linted, not tested, and CI never reads it. The
+  general shape — **an artifact a workflow consumes but no check covers** — is worth
+  looking for directly, since by construction no suite will point at it.
+- **A property was confirmed rather than assumed: the overlap fix cannot deadlock.**
+  Waiting for a reservation another operation holds invites the question, and the answer
+  is structural. `start_walk_member` acquires one reservation and drops it when its own
+  body ends, before `restore_profiles` advances; so a walk never holds A while waiting for
+  B. Hold-and-wait is absent, and without it deadlock is impossible regardless of how many
+  groups overlap or in what order. This is a consequence of the per-member granularity
+  chosen earlier over `reserve_many`, which would have created exactly the multi-resource
+  hold that makes deadlock possible.
+- **The honest limit: three-way contention on one member can exceed the 25-second handoff
+  budget**, and the third waiter fails with "Another lifecycle operation is still in
+  progress for this profile". Recorded as a known degradation rather than fixed. An
+  unbounded wait would trade a legible failure for a hang, and raising the number only
+  moves the boundary.
+- **The UI asymmetry is intentional and was re-derived, not inherited.** Restore and a
+  group action exclude each other; two groups do not. The reason is that
+  `LaunchGroupSection.test.tsx` asserts a second group's Start stays enabled — the same
+  shipped assertion that redirected the original fix from the frontend to the backend —
+  and with the backend waiting, both arrangements are safe. Both guards are courtesy.
+
+**The checksum verification is the methodological point, and it argues against my own
+local test.** Simulating the workflow's command in Git Bash proves nothing here:
+`sha256sum` on this platform defaults to binary mode and writes `HASH *name`, while the
+`publish` job runs on `ubuntu-latest` where GNU coreutils writes `HASH  name`. Under the
+local format the old `sed 's# \./#  #'` does not even match, so the broken command passes
+locally — a local reproduction would have reported the defect as absent.
+
+Two things replace it, and both are stronger. The **published** v0.4.0 `SHA256SUMS.txt`
+was read byte by byte: three spaces after the hash, where GNU `-c` requires exactly two.
+That is the defect measured on the artifact users downloaded, not inferred. And the fixed
+workflow now runs `sha256sum -c` against the file it just wrote, in the same job on the
+same runner, so a wrong format fails the release rather than shipping. When a local
+simulation and self-verification-in-target-environment disagree about what has been
+proven, the second one is the claim to make.
+
 ## 2026-08-31 Post-Release Review
 
 A read-through of the shipped v0.4.0 code, with the user's standing approval to fix what

@@ -1,5 +1,57 @@
 # RunCove Handoff
 
+## 2026-09-01 v0.4.1 Released
+
+**v0.4.1 is published, and the user delegated the decision to release it.** They had
+twice been told the call was theirs; on 2026-09-01 they answered "没有问题的话你就自行
+确定发布吧" after asking for a review first. So the review came first and the release
+followed from it — not the other way round.
+
+It is a patch release by the semver reading that actually applies: every change fixes
+behavior, none adds a feature. The five version files moved together because
+`validate-version` refuses a tag that disagrees with any of them — root and desktop
+`Cargo.toml`, both `Cargo.lock` entries, `package.json`, `package-lock.json`, and
+`tauri.conf.json`.
+
+**The review found one release-blocking defect that no test could have caught.** The
+workflow publishes with `--notes-file RELEASE_NOTES.md`, and that file still said
+`# RunCove v0.4.0` throughout. Tagging without rewriting it would have put v0.4.0's
+notes on the v0.4.1 release page — a defect in the *release*, invisible to fmt, clippy,
+every test, and CI. Check that file against the tag before every future release; it is
+the one artifact the workflow reads and nothing validates.
+
+Three findings from reading the shipping code, recorded because they are properties
+rather than changes:
+
+- **The overlap fix cannot deadlock.** `start_walk_member` takes exactly one
+  reservation and drops it at the end of its own body, before `restore_profiles` reaches
+  the next member, so a walk never holds one reservation while waiting for another. Two
+  groups started in opposite orders therefore cannot lock each other — hold-and-wait,
+  one of deadlock's four necessary conditions, is absent by construction. This follows
+  from the per-member reservation granularity, which was a deliberate choice rather than
+  a convenience.
+- **Three groups contending for one member can exceed the handoff budget.** The third
+  waiter may wait past `RESERVATION_HANDOFF_TIMEOUT` (25s) and fail with "Another
+  lifecycle operation is still in progress for this profile". That is honest reporting of
+  real contention and better than an unbounded wait; it is a known degradation, not a
+  defect.
+- **The UI's restore↔group and group↔group rules are deliberately asymmetric.** Restore
+  and a group action exclude each other, while two groups may run at once. This is not an
+  oversight: the shipped `LaunchGroupSection.test.tsx` asserts a second group's Start
+  stays enabled, and the backend now waits, so both are safe. Both guards are courtesy,
+  not correctness.
+
+**The checksum fix was verified by evidence, and the local simulation deliberately does
+not count.** Git Bash's `sha256sum` defaults to binary mode and emits `HASH *name`,
+while the `publish` job runs on `ubuntu-latest` where GNU coreutils emits `HASH  name`
+— so the old `sed` never misfired locally and a local test cannot reproduce the defect
+or validate the cure. What does count: the actually-published v0.4.0 `SHA256SUMS.txt`
+was read byte by byte and has **three** spaces after the hash where GNU requires two,
+which confirms the diagnosis on the artifact itself; and the fixed workflow runs
+`sha256sum -c` on the file it just wrote, in the same job on the same runner, so a wrong
+format fails the release instead of shipping. Prefer that shape — self-verification in
+the target environment — over a local reproduction whenever the two disagree.
+
 ## 2026-08-31 Post-Release Review Fixes
 
 **`main` carries unreleased fixes on top of the `v0.4.0` tag.** The release itself is
