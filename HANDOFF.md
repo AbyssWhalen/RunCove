@@ -231,9 +231,24 @@ design and the published artifact is a portable zip. So the exe was copied to
 `%LOCALAPPDATA%\Programs\RunCove\RunCove.exe` alongside the same three documents the zip
 carries, and Start Menu and Desktop shortcuts were created with `WScript.Shell` and verified
 to resolve to it with the right working directory. To remove it: delete that folder and the
-two `.lnk` files. **It was deliberately not launched** — a production-identifier launch
-migrates the real database `1 → 3` irreversibly, which `CLAUDE.md` reserves for the user.
-The backup is at `%LOCALAPPDATA%\RunCove-backup-v0.3.0-2026-08-31\runcove.sqlite3`.
+two `.lnk` files. It was handed over unlaunched, because a production-identifier launch
+migrates the real database `1 → 3` irreversibly and that was the user's call to make.
+
+**The user then made it, and the migration succeeded on the real database.** The installed
+app started at 13:56:51 on 2026-09-01 and the live file was at `user_version = 3` by
+13:56:52 — ten tables, `launch_groups`, `launch_group_members`, and `run_log_archives` all
+created, and the row counts unchanged at 4 run sessions and 2 settings. The backup is
+untouched at version 1
+(`%LOCALAPPDATA%\RunCove-backup-v0.3.0-2026-08-31\runcove.sqlite3`, last written
+2026-08-11).
+
+So update three things when reading older notes. The irreversible step is **done**, not
+pending. The live database is **3**, not 1 — every claim that it "is still at 1" describes
+the state before 13:56:51. And the one-way property is now load-bearing rather than
+theoretical: **v0.3.0 and earlier can no longer open this file**, and restoring the backup
+is the only way back, at the cost of the sessions written since. What this also settles is
+that the two rehearsals predicted the real outcome exactly, which is the argument for
+rehearsing on a copy rather than reasoning about it.
 
 **The desktop executable had been missing the project's release settings, and it is the
 artifact users download.** Installing it is what surfaced this: the local exe was 25,912,797
@@ -269,6 +284,29 @@ restored with `git checkout --`. It came up titled `RunCove` with a live WebView
 database to 3 with its 4 sessions and 2 settings intact. The colour count is the load-bearing
 assertion: a binary whose embedded frontend assets had been damaged by `strip` would still
 migrate the database and still show a window, just an empty one.
+
+**About 24 GB of stale build staging is gone, and four older notes now cite paths that do not
+exist.** With the user's approval on 2026-09-01, thirteen one-off staging directories under
+`apps/desktop/src-tauri/target/` — `ci-resource-fix` (5.5 GB), `msvc-resource-test` (3.5 GB),
+`msvc-resource-release`, `accidental-nested-build-20260811`, `ci-resource-split-release`,
+`rustup-msvc`, and the seven `final-20260810*` / `final-20260811*` directories — plus
+`suite.txt`, `suite2.txt`, and four v0.2.0 verification artifacts in the root `target/` were
+deleted. `debug` and `release` in both trees were kept. `du` had estimated 26.9 GB and the
+drive gained 24.1 GB; the difference is cargo hardlinking inside a target tree, which makes
+`du` count some files twice. All of it was gitignored build output that cargo regenerates.
+
+The four affected citations are `HANDOFF.md:3232`, `HANDOFF.md:3321`, `notes.md:2819`, and
+`notes.md:2860`, each naming a `final-20260811-*/release/runcove-desktop.exe`. They are left
+as written rather than edited, the same way the deleted `D:\tmp\` scratch directories were
+handled: they are historical records of where a build stood at an August checkpoint, and
+rewriting a past record to match present disk state loses more than it fixes. Read them as
+"this is where that build was", not as a path to open.
+
+Four orphaned isolated data directories went too — `com.abysswhale.runcove.demo0819`,
+`.demo0831`, `.lto0901`, and `.qa`, about 146 MB. Notes measuring those databases
+(`HANDOFF.md:476` reads "demo0819 remains at 2, qa at 1") describe what was true when
+written; the directories are gone, and the isolated-build recipe recreates one in minutes if
+a measurement needs redoing.
 
 **Still unauthorized, each needing its own ask:** any rewrite of published history (the
 `[codex]` marker in `bd2b777` and the two `[Qoder]` markers stay) and any change to

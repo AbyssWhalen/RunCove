@@ -101,8 +101,9 @@ was written, measured against an existing test, and then withdrawn.
   the exact call `lib.rs:240` makes at startup, reached through a temporary test in
   `storage.rs` that was deleted afterwards. The copy migrated to `user_version = 3` with all
   three added tables present and every reader (`settings`, `list_projects`,
-  `list_launch_groups`, `list_sessions`) working; the live file was re-read afterwards and is
-  still at 1.
+  `list_launch_groups`, `list_sessions`) working; the live file was re-read afterwards and was
+  still at 1 at that point. **It is at 3 now** — the user launched the installed app later the
+  same day and the real migration ran; see the entry at the end of this section.
 
   Rehearsing on a copy rather than reasoning about it is the point: the migration tests use
   synthetic fixtures, and a fixture cannot tell you whether *this* file migrates. What it
@@ -184,9 +185,11 @@ was written, measured against an existing test, and then withdrawn.
   change and 0.65x the published v0.4.0.
 
   **The published artifact was checked directly rather than inferred from the local size.**
-  `/tmp/zipx/runcove-desktop.exe`, extracted from the v0.4.0 download, holds one
-  `runcove_desktop.pdb` reference and 632 source-path strings; the new build holds zero PDB
-  references and 288. A `strip` removes the debug directory that names the PDB, so that pair
+  The exe extracted from `runcove-desktop-windows-x86_64-portable.zip` — the verified v0.4.0
+  download kept at `D:\tmp\runcove-v040-dl\`, whose checksum is recorded in this file — holds
+  one `runcove_desktop.pdb` reference and 632 source-path strings; the new build holds zero PDB
+  references and 288. The extraction itself was scratch and has been deleted; re-extract from
+  that zip to re-run the check. A `strip` removes the debug directory that names the PDB, so that pair
   of readings is the evidence the shipped binary was built without it.
 
   Two corrections to the obvious reading of those numbers, both of which the first write-up
@@ -213,6 +216,20 @@ was written, measured against an existing test, and then withdrawn.
   with. The next full release build took **1m53s** against roughly 1m34s before, so the
   recurring cost is about twenty seconds and the large number is paid once per profile
   change. Measure a build-time regression on the second build, not the first.
+- **The real migration happened, run by the user, and it matched both rehearsals exactly.**
+  The installed app started at 13:56:51 on 2026-09-01 and the live database read
+  `user_version = 3` at 13:56:52 — ten tables, the three added ones present, and the row
+  counts unchanged at 4 run sessions and 2 settings. The backup is untouched at version 1,
+  last written 2026-08-11.
+
+  Two things this settles, and one it creates. It settles that the rehearsals were worth
+  running: a library-level `Storage::open` on a copy and then the real binary on a seeded copy
+  both predicted this outcome, and the prediction held on the file that mattered. It also
+  settles that the step belonged to the user — it was handed over unlaunched, and they took
+  it. What it creates is that **the one-way property is now real rather than theoretical**:
+  this file is no longer openable by v0.3.0 or earlier, so the backup is the only way back and
+  costs whatever has been written since. Every note that says the live database "is still at
+  1" is describing the state before 13:56:51.
 
   **`cargo test` cannot verify this change**, which is the part worth carrying forward: tests
   build under the `test` profile, so a green suite says nothing about whether LTO and strip
